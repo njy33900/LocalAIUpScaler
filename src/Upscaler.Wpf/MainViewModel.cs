@@ -1,3 +1,5 @@
+using System.Windows.Data;
+using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -5,9 +7,13 @@ using System.Windows.Media.Imaging;
 using Upscaler.Core;
 namespace Upscaler.Wpf;
 
+public sealed record SettingChoice(string Key, string Label);
+
 public sealed class ImageItem : Observable
 {
     public required string Path { get; init; }
+    public DateTime Modified { get; set; }
+    public long FileSize { get; set; }
     public string Name => System.IO.Path.GetFileName(Path);
     private BitmapSource? thumbnail;
     private string? error;
@@ -21,16 +27,62 @@ public sealed class MainViewModel : Observable
     public Settings Settings { get; }
     public string Root { get; }
     public ObservableCollection<ImageItem> Files { get; } = new();
-    public string[] Devices { get; } = ["auto", "cuda", "cpu"];
-    public string[] Precisions { get; } = ["auto", "fp16", "fp32"];
+    public SettingChoice[] Devices { get; } = [new("auto", "자동 · GPU 우선"), new("cuda", "NVIDIA CUDA"), new("cpu", "CPU")];
+    public SettingChoice[] Precisions { get; } = [new("auto", "자동"), new("fp16", "FP16"), new("fp32", "FP32")];
+    public SettingChoice[] SortChoices { get; } = [new("name", "이름"), new("modified", "수정일"), new("size", "파일 크기")];
+    public string SortKey { get => Settings.ThumbnailSort; set { if (value is "name" or "modified" or "size") { Settings.ThumbnailSort=value; Changed(); _ = SortThumbnailsAsync(); } } }
+    public bool SortDescending { get => Settings.ThumbnailDescending; set { Settings.ThumbnailDescending=value; Changed(); Changed(nameof(SortDirectionLabel)); _ = SortThumbnailsAsync(); } }
+    public string SortDirectionLabel => SortDescending ? "↓" : "↑";
+    private long sortVersion;
+    public async Task SortThumbnailsAsync()
+    {
+        var version=++sortVersion;var items=Files.ToArray();var key=SortKey;var descending=SortDescending;
+        if (key != "name")
+        {
+            var metadata = await Task.Run(() => items.Select(item => {
+                try { var info=new FileInfo(item.Path);return (Item:item, Modified:info.LastWriteTimeUtc, Size:info.Length); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (Item:item, Modified:DateTime.MinValue, Size:-1L); }
+            }).ToArray());
+            if(version!=sortVersion || lifetime.IsCancellationRequested) return;
+            foreach(var data in metadata) { data.Item.Modified=data.Modified;data.Item.FileSize=data.Size; }
+        }
+        if(version!=sortVersion || lifetime.IsCancellationRequested) return;
+        var view=CollectionViewSource.GetDefaultView(Files);
+        using(view.DeferRefresh()) {
+            view.SortDescriptions.Clear();
+            view.SortDescriptions.Add(new SortDescription(key switch { "modified"=>nameof(ImageItem.Modified),"size"=>nameof(ImageItem.FileSize),_=>nameof(ImageItem.Name) },descending?ListSortDirection.Descending:ListSortDirection.Ascending));
+            if(key!="name") view.SortDescriptions.Add(new SortDescription(nameof(ImageItem.Name),ListSortDirection.Ascending));
+        }
+    }
     public string[] Formats { get; } = ["PNG", "JPEG"];
-    public string Device { get => Settings.Device; set => Settings.Device = value; }
-    public string Precision { get => Settings.Precision; set => Settings.Precision = value; }
+    public string Device
+    {
+        get => Settings.Device;
+        set { Settings.Device = value; Changed(); Changed(nameof(Precision)); Changed(nameof(PrecisionEnabled)); if (EngineReady) MarkEngineReady(cudaAvailable); }
+    }
+    public bool PrecisionEnabled => Device != "cpu";
+    public string Precision { get => Device == "cpu" ? "fp32" : Settings.Precision; set { if (Device != "cpu") Settings.Precision = value; Changed(); } }
     public string Format { get => Settings.Format; set => Settings.Format = value; }
     public string Output { get => Settings.Output; set { Settings.Output = value; Changed(); } }
-    public string TileText { get => tileText; set => Set(ref tileText, value); }
-    private string tileText;
-    private string folder = "", address = "", filter = "", status = "폴더를 선택하세요.", engineStatus = "Worker 준비 전";
+    public IReadOnlyList<TilePreset> Presets => TilePresets.All;
+    private TilePreset selectedPreset;
+    public TilePreset SelectedPreset
+    {
+        get => selectedPreset;
+        set { if (value is not null && Presets.Contains(value) && Set(ref selectedPreset, value)) { Settings.TilePreset = value.Key; Settings.Tile = value.TileSize; Changed(nameof(PresetHint)); } }
+    }
+    public string PresetHint => SelectedPreset.Description;
+    private bool cudaAvailable;
+    public bool EngineReady { get; private set; }
+    public bool EngineError => EngineStatus.Contains("오류") || EngineStatus.Contains("실패");
+    public void MarkEngineReady(bool cuda)
+    {
+        cudaAvailable = cuda;
+        EngineStatus = Device == "cuda" && !cuda ? "엔진 오류 · CUDA 사용 불가" :
+            "엔진 준비됨";
+        EngineReady = !EngineError; Changed(nameof(EngineReady));
+    }
+    private string folder = "", address = "", filter = "", status = "폴더를 선택하세요.", engineStatus = "엔진 준비 중…";
     private string previewMessage = "이미지를 선택하세요.", imageInfo = "";
     private BitmapSource? preview;
     private ImageItem? selected;
@@ -39,15 +91,18 @@ public sealed class MainViewModel : Observable
     private CancellationTokenSource navigation = new(), previewCancel = new(), thumbnails = new();
     private readonly CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim decoders = new(3, 3);
-    private readonly LruCache<string, BitmapSource> cache = new(128);
+    private readonly LruCache<string, BitmapSource> cache = new(256);
+    private readonly ThumbnailDecoder thumbnailDecoder;
+    public int ThumbnailDecoderStarts => thumbnailDecoder.Starts;
     private readonly Func<string, CancellationToken, Task<string[]>> scan;
     public string Folder { get => folder; private set => Set(ref folder, value); }
     public string Address { get => address; set => Set(ref address, value); }
     public string Filter { get => filter; set { if (Set(ref filter, value)) ApplyFilter(); } }
     public string Status { get => status; set => Set(ref status, value); }
-    public string EngineStatus { get => engineStatus; set => Set(ref engineStatus, value); }
+    public string EngineStatus { get => engineStatus; set { if (Set(ref engineStatus, value)) { EngineReady = false; Changed(nameof(EngineReady)); Changed(nameof(EngineError)); } } }
     public string PreviewMessage { get => previewMessage; set => Set(ref previewMessage, value); }
     public string ImageInfo { get => imageInfo; set => Set(ref imageInfo, value); }
+    public string ImageDimensions => OriginalWidth > 0 ? $"{OriginalWidth:N0} × {OriginalHeight:N0}" : "";
     public BitmapSource? Preview { get => preview; set => Set(ref preview, value); }
     public int OriginalWidth { get; private set; }
     public int OriginalHeight { get; private set; }
@@ -63,17 +118,19 @@ public sealed class MainViewModel : Observable
     public MainViewModel(Func<string, CancellationToken, Task<string[]>>? scanner = null, Settings? settings = null)
     {
         Settings = settings ?? Settings.Load();
-        tileText = Settings.Tile.ToString();
+        selectedPreset = TilePresets.Resolve(Settings.TilePreset, Settings.Tile);
+        Settings.TilePreset = selectedPreset.Key; Settings.Tile = selectedPreset.TileSize;
         scan = scanner ?? ((path, token) => Task.Run(() => Images.Scan(path, token), token));
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null && !File.Exists(System.IO.Path.Combine(dir.FullName, "python", "worker.py"))) dir = dir.Parent;
         Root = dir?.FullName ?? AppContext.BaseDirectory;
+        thumbnailDecoder = new(Root);
     }
 
     public Settings CaptureSettings()
     {
-        if (!int.TryParse(TileText, out var tile)) throw new ArgumentException("타일 크기는 정수로 입력하세요.");
-        var copy = Settings.Snapshot(); copy.Tile = tile; copy.Validate(); Settings.Tile = tile; return copy;
+        var copy = Settings.Snapshot(); copy.Tile = SelectedPreset.TileSize; copy.TilePreset = SelectedPreset.Key;
+        copy.Precision = Precision; copy.Validate(); return copy;
     }
 
     public async Task<bool> NavigateAsync(string path)
@@ -116,34 +173,42 @@ public sealed class MainViewModel : Observable
         foreach (var path in snapshot.Where(p => System.IO.Path.GetFileName(p).Contains(Filter, StringComparison.CurrentCultureIgnoreCase)))
             Files.Add(new() { Path = path });
         Selected = Files.FirstOrDefault(x => string.Equals(x.Path, preserve, StringComparison.OrdinalIgnoreCase));
+        _ = SortThumbnailsAsync();
         Changed(nameof(HasFiles));
         if (Files.Count == 0 && Selected is null) PreviewMessage = "표시할 이미지가 없습니다.";
     }
 
     public async Task LoadThumbnailAsync(ImageItem item)
     {
-        ReleaseThumbnail(item);
+        if (item.Thumbnail is not null || item.Loading is not null) return;
         var loading = CancellationTokenSource.CreateLinkedTokenSource(thumbnails.Token, lifetime.Token);
         item.Loading = loading;
+        var token = loading.Token;
         try
         {
-            var key = await Task.Run(() => { var info = new FileInfo(item.Path); return $"{item.Path}|{info.LastWriteTimeUtc.Ticks}|{info.Length}"; }, loading.Token);
-            loading.Token.ThrowIfCancellationRequested();
+            var key = await Task.Run(() => { var info = new FileInfo(item.Path); return $"{item.Path}|{info.LastWriteTimeUtc.Ticks}|{info.Length}"; }, token);
+            token.ThrowIfCancellationRequested();
             if (!cache.TryGet(key, out var bitmap))
             {
-                bitmap = (await DecodeAsync(item.Path, 160, loading.Token)).Image;
-                loading.Token.ThrowIfCancellationRequested();
+                bitmap = await thumbnailDecoder.DecodeAsync(item.Path, token, lifetime.Token);
+                lifetime.Token.ThrowIfCancellationRequested();
                 cache.Put(key, bitmap);
+                token.ThrowIfCancellationRequested();
             }
-            if (ReferenceEquals(item.Loading, loading)) item.Thumbnail = bitmap;
+            if (ReferenceEquals(item.Loading, loading)) { item.Error = null; item.Thumbnail = bitmap; }
         }
         catch (OperationCanceledException) { }
-        catch (Exception error) { if (!loading.IsCancellationRequested) item.Error = error.Message; }
+        catch (Exception error) { if (!token.IsCancellationRequested) item.Error = error.Message; }
+        finally
+        {
+            if (ReferenceEquals(item.Loading, loading)) item.Loading = null;
+            loading.Dispose();
+        }
     }
 
     public void ReleaseThumbnail(ImageItem item)
     {
-        item.Loading?.Cancel(); item.Loading?.Dispose(); item.Loading = null; item.Thumbnail = null;
+        item.Loading?.Cancel(); item.Loading = null; item.Thumbnail = null;
     }
 
     public async Task<(BitmapSource Image, string Dimensions)> DecodeAsync(string path, int size, CancellationToken token)
@@ -190,7 +255,7 @@ public sealed class MainViewModel : Observable
     {
         previewCancel.Cancel(); previewCancel.Dispose(); previewCancel = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         var token = previewCancel.Token;
-        Preview = null; ImageInfo = ""; OriginalWidth = OriginalHeight = 0;
+        Preview = null; ImageInfo = ""; OriginalWidth = OriginalHeight = 0; Changed(nameof(ImageDimensions));
         PreviewMessage = item is null ? "이미지를 선택하세요." : "이미지를 불러오는 중…";
         if (item is null) return;
         try
@@ -198,7 +263,7 @@ public sealed class MainViewModel : Observable
             var decoded = await DecodeAsync(item.Path, 4096, token);
             token.ThrowIfCancellationRequested();
             var dimensions = decoded.Dimensions.Split('x');
-            OriginalWidth = int.Parse(dimensions[0]); OriginalHeight = int.Parse(dimensions[1]);
+            OriginalWidth = int.Parse(dimensions[0]); OriginalHeight = int.Parse(dimensions[1]); Changed(nameof(ImageDimensions));
             ImageInfo = $"{item.Name} · {decoded.Dimensions}";
             PreviewMessage = ""; Preview = decoded.Image;
         }
@@ -210,6 +275,7 @@ public sealed class MainViewModel : Observable
     {
         lifetime.Cancel(); navigation.Cancel(); previewCancel.Cancel(); thumbnails.Cancel();
         foreach (var item in Files) ReleaseThumbnail(item);
+        thumbnailDecoder.Dispose();
         cache.Clear();
     }
 }

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Windows;
@@ -7,7 +9,7 @@ using Upscaler.Core;
 using Upscaler.PythonBridge;
 namespace Upscaler.Wpf;
 
-public sealed class ProgressWindow : Window
+public sealed class ProgressWindow : ThemedWindow
 {
     private readonly PythonWorker worker;
     private readonly string[] paths;
@@ -20,6 +22,7 @@ public sealed class ProgressWindow : Window
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Visibility = Visibility.Collapsed };
     private readonly ProgressBar bar = new() { Height = 8, Minimum = 0, Maximum = 100 };
     private readonly Button button = new() { Content = "작업 취소", HorizontalAlignment = HorizontalAlignment.Right };
+    private readonly Button openOutput = new() { Content = "결과 폴더 열기", Visibility = Visibility.Collapsed };
     private bool finished, confirming;
     public bool IsFinished => finished;
     public string? LastOutput { get; private set; }
@@ -34,7 +37,16 @@ public sealed class ProgressWindow : Window
         var panel = new StackPanel { Margin = new(24) };
         panel.Children.Add(new TextBlock { Text = $"이미지 업스케일링 · {paths.Length}개", FontSize = 22 });
         panel.Children.Add(file); panel.Children.Add(bar); panel.Children.Add(counts);
-        panel.Children.Add(stage); panel.Children.Add(details); panel.Children.Add(button); Content = panel;
+        panel.Children.Add(stage); panel.Children.Add(details);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        actions.Children.Add(openOutput); actions.Children.Add(button); panel.Children.Add(actions); Content = panel;
+        openOutput.Click += (_, _) => {
+            try {
+                var folder = Path.GetDirectoryName(LastOutput!);
+                if (folder is null || !Directory.Exists(folder)) throw new DirectoryNotFoundException("결과 폴더가 존재하지 않습니다.");
+                Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+            } catch (Exception error) { AppDialog.Inform(this, "결과 폴더 열기", error.Message); }
+        };
         button.Click += (_, _) => { if (finished) Close(); else RequestCancellation(); };
         Closing += OnClosing;
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { e.Handled = true; if (finished) Close(); else RequestCancellation(); } };
@@ -50,10 +62,10 @@ public sealed class ProgressWindow : Window
         confirming = true;
         try
         {
-            if (MessageBox.Show(this, "현재 작업과 남은 작업을 취소할까요?", "취소 확인", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            if (AppDialog.Confirm(this, "작업 취소", "현재 이미지와 남은 이미지 처리를 중단할까요?\n이미 완료된 결과는 유지됩니다.", "작업 취소"))
             {
                 cancel.Cancel(); button.IsEnabled = false; button.Content = "작업 종료 확인 중…";
-                stage.Text = "Worker와 임시 파일을 정리하고 있습니다.";
+                stage.Text = "작업을 종료하고 임시 파일을 정리하고 있습니다.";
                 return true;
             }
         }
@@ -108,6 +120,7 @@ public sealed class ProgressWindow : Window
             file.Text = cancel.IsCancellationRequested ? "취소 처리가 완료되었습니다." : "작업이 끝났습니다.";
             stage.Text = "출력: " + settings.Output; stage.TextWrapping = TextWrapping.Wrap;
             button.Content = "닫기"; button.IsEnabled = true;
+            openOutput.Visibility = LastOutput is not null ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 }

@@ -8,14 +8,15 @@ using Upscaler.Core;
 using Upscaler.PythonBridge;
 namespace Upscaler.Wpf;
 
-public partial class MainWindow : Window
+public partial class MainWindow : ThemedWindow
 {
     private readonly MainViewModel vm = new();
     private readonly PythonWorker worker;
     private readonly List<string> history = [];
     private int historyIndex = -1;
     private string? lastResult;
-    private bool busy, closing, closeReady, closeAfterJob, fitMode = true;
+    private bool busy, preparing, closing, closeReady, closeAfterJob, fitMode = true;
+    private readonly HashSet<TreeViewItem> loadingNodes = [];
     private double zoom = 1;
     private Point? dragStart;
     private double dragX, dragY;
@@ -27,10 +28,12 @@ public partial class MainWindow : Window
     {
         this.diagnostic = diagnostic;
         InitializeComponent(); DataContext = vm; worker = new(vm.Root);
-        TreeColumn.Width = new(vm.Settings.TreeWidth); ThumbnailRow.Height = new(vm.Settings.ThumbnailHeight);
+        TreeColumn.Width = new(vm.Settings.TreeWidth);
+        if (vm.Settings.PreviewLayout == "horizontal") HorizontalLayoutButton.IsChecked = true; else VerticalLayoutButton.IsChecked = true;
         foreach (var drive in DriveInfo.GetDrives()) Folders.Items.Add(Node(drive.RootDirectory.FullName));
         vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.Preview) && vm.Preview is not null) FitPreview(); };
-        worker.StatusChanged += value => Dispatcher.BeginInvoke(() => vm.EngineStatus = value);
+        worker.StatusChanged += value => Dispatcher.BeginInvoke(() => vm.EngineStatus = value.Replace("Worker", "엔진"));
+        UpdateNavigationButtons();
         Loaded += async (_, _) =>
         {
             if (diagnostic) return;
@@ -41,10 +44,35 @@ public partial class MainWindow : Window
         };
         PreviewScroll.SizeChanged += (_, _) => { if (fitMode) FitPreview(); };
     }
+    private void ToggleThumbnailSortDirection(object sender, RoutedEventArgs e) => vm.SortDescending = !vm.SortDescending;
+    private void LayoutChanged(object sender, RoutedEventArgs e)
+    {
+        if (PreviewLayoutGrid is null) return;
+        bool horizontal = ReferenceEquals(sender, HorizontalLayoutButton);
+        if (vm.Settings.PreviewLayout == "vertical" && ThumbnailRow.ActualHeight >= 110)
+            vm.Settings.ThumbnailHeight = ThumbnailRow.ActualHeight;
+        PreviewLayoutGrid.ColumnDefinitions[0].MinWidth = 210;
+        PreviewLayoutGrid.ColumnDefinitions[2].MinWidth = horizontal ? 144 : 0;
+        PreviewLayoutGrid.RowDefinitions[0].MinHeight = 150;
+        ThumbnailRow.MinHeight = horizontal ? 0 : 190;
+        vm.Settings.PreviewLayout = horizontal ? "horizontal" : "vertical";
+        PreviewLayoutGrid.ColumnDefinitions[1].Width = new(horizontal ? 10 : 0);
+        PreviewLayoutGrid.ColumnDefinitions[2].Width = horizontal ? new GridLength(1.5, GridUnitType.Star) : new(0);
+        PreviewLayoutGrid.ColumnDefinitions[0].Width = new(horizontal ? 2 : 1, GridUnitType.Star);
+        PreviewLayoutGrid.RowDefinitions[1].Height = new(horizontal ? 0 : 10);
+        ThumbnailRow.Height = new(horizontal ? 0 : vm.Settings.ThumbnailHeight);
+        Grid.SetRow(ThumbnailPane, horizontal ? 0 : 2); Grid.SetColumn(ThumbnailPane, horizontal ? 2 : 0);
+        Grid.SetRow(PreviewSplitter, horizontal ? 0 : 1); Grid.SetColumn(PreviewSplitter, horizontal ? 1 : 0);
+        PreviewSplitter.ResizeDirection = horizontal ? GridResizeDirection.Columns : GridResizeDirection.Rows;
+        PreviewSplitter.Width = horizontal ? 4 : double.NaN; PreviewSplitter.Height = horizontal ? double.NaN : 4;
+        PreviewSplitter.HorizontalAlignment = horizontal ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+        PreviewSplitter.VerticalAlignment = horizontal ? VerticalAlignment.Stretch : VerticalAlignment.Center;
+        Dispatcher.BeginInvoke(() => { if (vm.Selected is not null) Thumbnails.ScrollIntoView(vm.Selected); });
+    }
     private async Task InitializeWorkerAsync()
     {
-        try { await worker.StartAsync(); }
-        catch (Exception error) { if (!closing) vm.EngineStatus = "Worker 오류: " + error.Message; AppLog.Write(error.ToString()); }
+        try { await worker.StartAsync(); vm.MarkEngineReady(worker.DeviceInfo.GetProperty("cuda").GetBoolean()); }
+        catch (Exception error) { if (!closing) vm.EngineStatus = "엔진 오류: " + error.Message; AppLog.Write(error.ToString()); }
     }
     private TreeViewItem Node(string path)
     {
@@ -52,16 +80,56 @@ public partial class MainWindow : Window
         node.Items.Add(new TreeViewItem { Header = "…" });
         node.Expanded += async (_, e) =>
         {
-            if (e.OriginalSource != node) return;
-            if (node.Items.Count == 1 && node.Items[0] is TreeViewItem { Tag: null })
-            {
-                node.Items.Clear();
-                try { var paths = await Task.Run(() => Directory.GetDirectories(path)); foreach (var child in paths.Order()) node.Items.Add(Node(child)); }
-                catch (Exception error) { vm.Status = error.Message; node.Items.Add(new TreeViewItem { Header = "접근할 수 없음 · 다시 펼쳐 재시도" }); }
-            }
+            if (e.OriginalSource == node && node.Items.Count == 1 && node.Items[0] is TreeViewItem { Tag: null })
+                await LoadNodeAsync(node, path);
         };
         return node;
     }
+    private async Task LoadNodeAsync(TreeViewItem node, string path)
+    {
+        if (!loadingNodes.Add(node)) return;
+        try
+        {
+            var paths = await Task.Run(() => Directory.GetDirectories(path));
+            var expanded = node.Items.OfType<TreeViewItem>().Where(x => x.IsExpanded).Select(x => x.Tag as string).ToHashSet();
+            node.Items.Clear();
+            foreach (var child in paths.Order()) { var item = Node(child); node.Items.Add(item); if (expanded.Contains(child)) item.IsExpanded = true; }
+        }
+        catch (Exception error)
+        {
+            vm.Status = "폴더를 읽을 수 없습니다: " + error.Message;
+            node.Items.Clear(); node.Items.Add(new TreeViewItem { Header = "접근할 수 없음 · 다시 펼쳐 재시도" });
+        }
+        finally { loadingNodes.Remove(node); }
+    }
+    private static TreeViewItem? FindNode(ItemsControl parent, string path)
+    {
+        foreach (var node in parent.Items.OfType<TreeViewItem>())
+        {
+            if (node.Tag is string candidate && string.Equals(candidate.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return node;
+            if (FindNode(node, path) is { } nested) return nested;
+        }
+        return null;
+    }
+    private void UpdateNavigationButtons()
+    {
+        BackButton.IsEnabled = historyIndex > 0;
+        ForwardButton.IsEnabled = historyIndex + 1 < history.Count;
+        try { UpButton.IsEnabled = !string.IsNullOrEmpty(vm.Folder) && Directory.GetParent(vm.Folder) is not null; }
+        catch { UpButton.IsEnabled = false; }
+    }
+    private async Task RefreshCurrentFolderAsync()
+    {
+        if (busy || string.IsNullOrEmpty(vm.Folder)) return;
+        var path = vm.Folder;
+        await Navigate(path, false);
+        if (FindNode(Folders, path) is { } node) await LoadNodeAsync(node, path);
+    }
+    private async void WindowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F5) { e.Handled = true; await RefreshCurrentFolderAsync(); }
+    }
+    private void ClearSearch(object sender, RoutedEventArgs e) { vm.Filter = ""; SearchBox.Focus(); }
     private async Task<bool> Navigate(string path, bool record = true)
     {
         if (!await vm.NavigateAsync(path)) return false;
@@ -70,17 +138,16 @@ public partial class MainWindow : Window
             if (historyIndex + 1 < history.Count) history.RemoveRange(historyIndex + 1, history.Count - historyIndex - 1);
             history.Add(vm.Folder); historyIndex = history.Count - 1;
         }
+        UpdateNavigationButtons();
         return true;
     }
-    private async void OpenFolder(object s, RoutedEventArgs e) { var d = new OpenFolderDialog(); if (d.ShowDialog(this) == true) await Navigate(d.FolderName); }
-    private async void RefreshFolder(object s, RoutedEventArgs e) => await Navigate(vm.Folder, false);
-    private async void GoBack(object s, RoutedEventArgs e) { if (historyIndex > 0 && await Navigate(history[historyIndex - 1], false)) historyIndex--; }
-    private async void GoForward(object s, RoutedEventArgs e) { if (historyIndex + 1 < history.Count && await Navigate(history[historyIndex + 1], false)) historyIndex++; }
+    private async void RefreshFolder(object s, RoutedEventArgs e) => await RefreshCurrentFolderAsync();
+    private async void GoBack(object s, RoutedEventArgs e) { if (historyIndex > 0 && await Navigate(history[historyIndex - 1], false)) { historyIndex--; UpdateNavigationButtons(); } }
+    private async void GoForward(object s, RoutedEventArgs e) { if (historyIndex + 1 < history.Count && await Navigate(history[historyIndex + 1], false)) { historyIndex++; UpdateNavigationButtons(); } }
     private async void GoUp(object s, RoutedEventArgs e) { try { if (Directory.GetParent(vm.Folder) is { } p) await Navigate(p.FullName); } catch (Exception ex) { vm.Status = ex.Message; } }
     private async void AddressKey(object s, KeyEventArgs e) { if (e.Key == Key.Enter) { e.Handled = true; await Navigate(vm.Address); } }
     private async void FolderSelected(object s, RoutedPropertyChangedEventArgs<object> e) { if (e.NewValue is TreeViewItem { Tag: string path }) await Navigate(path); }
     private void ChooseOutput(object s, RoutedEventArgs e) { var d = new OpenFolderDialog(); if (d.ShowDialog(this) == true) vm.Output = d.FolderName; }
-    private void ShowSettings(object s, RoutedEventArgs e) { SettingsScroll.ScrollToTop(); SettingsScroll.Focus(); }
     private void Fit(object s, RoutedEventArgs e) => FitPreview();
     private void FitPreview()
     {
@@ -93,6 +160,7 @@ public partial class MainWindow : Window
     private void ApplyZoom()
     {
         PreviewImage.Width = vm.OriginalWidth * zoom; PreviewImage.Height = vm.OriginalHeight * zoom;
+        ZoomLabel.Text = $"{zoom * 100:0}%";
     }
     private void SetZoom(double factor) { if (vm.Preview is null) return; fitMode = false; zoom = Math.Clamp(zoom * factor, 0.01, 8); ApplyZoom(); }
     private void ZoomIn(object s, RoutedEventArgs e) => SetZoom(1.25);
@@ -111,6 +179,7 @@ public partial class MainWindow : Window
         PreviewScroll.ScrollToHorizontalOffset(dragX + start.X - at.X); PreviewScroll.ScrollToVerticalOffset(dragY + start.Y - at.Y);
     }
     private void PreviewUp(object s, MouseButtonEventArgs e) { dragStart = null; PreviewScroll.ReleaseMouseCapture(); PreviewScroll.Cursor = Cursors.Arrow; }
+    private void PreviewCaptureLost(object sender, MouseEventArgs e) { dragStart = null; PreviewScroll.Cursor = Cursors.Arrow; }
     private async void ThumbnailLoaded(object s, RoutedEventArgs e) { if (s is FrameworkElement { DataContext: ImageItem item }) await vm.LoadThumbnailAsync(item); }
     private void ThumbnailUnloaded(object s, RoutedEventArgs e) { if (s is FrameworkElement { DataContext: ImageItem item }) vm.ReleaseThumbnail(item); }
     private async void ThumbnailChanged(object s, DependencyPropertyChangedEventArgs e)
@@ -126,25 +195,29 @@ public partial class MainWindow : Window
         else if (File.Exists(path) && Images.Extensions.Contains(System.IO.Path.GetExtension(path)))
         { vm.Filter = ""; if (await Navigate(System.IO.Path.GetDirectoryName(path)!)) vm.Selected = vm.Files.FirstOrDefault(x => x.Path == path); }
     }
-    private async void RunImage(object s, RoutedEventArgs e) { if (vm.Selected is { } item) await Run([item.Path]); }
+    private async void RunImage(object s, RoutedEventArgs e) { if (!preparing && vm.Selected is { } item) await Run([item.Path]); }
     private async void RunFolder(object s, RoutedEventArgs e)
     {
+        if (busy || preparing) return;
+        preparing = true;
         try { var folder = vm.Folder; var paths = await Task.Run(() => Images.Scan(folder)); await Run(paths); }
         catch (Exception error) { vm.Status = error.Message; }
+        finally { preparing = false; }
     }
     private Task Run(string[] paths)
     {
         if (busy || paths.Length == 0) return Task.CompletedTask;
         Settings settings;
         try { settings = vm.CaptureSettings(); }
-        catch (Exception error) { MessageBox.Show(this, error.Message, "설정 확인"); return Task.CompletedTask; }
-        if (MessageBox.Show(this, $"{paths.Length}개 이미지\n출력: {settings.Output}\n\n업스케일링을 시작할까요?", "작업 확인", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return Task.CompletedTask;
+        catch (Exception error) { AppDialog.Inform(this, "설정 확인", error.Message); return Task.CompletedTask; }
+        if (!AppDialog.Confirm(this, "업스케일링 시작", $"대상: {paths.Length}개 이미지\n출력: {settings.Output}\n\n원본을 보존하고 4배 확대 결과를 저장합니다.", "시작")) return Task.CompletedTask;
         busy = true;
         try
         {
             progress = new(worker, paths, settings) { Owner = this }; progress.ShowDialog();
-            lastResult = progress.LastOutput ?? lastResult; vm.Status = progress.Summary;
-            vm.EngineStatus = "Worker 대기 · 다음 실행 시 자동 준비";
+            lastResult = progress.LastOutput ?? lastResult; ResultButton.IsEnabled = lastResult is not null; vm.Status = progress.Summary;
+            if (worker.ProcessId is not null) vm.MarkEngineReady(worker.DeviceInfo.GetProperty("cuda").GetBoolean());
+            else vm.EngineStatus = "엔진 대기 · 다음 실행 시 준비";
         }
         finally { progress = null; busy = false; if (closeAfterJob) { closeAfterJob = false; _ = Dispatcher.BeginInvoke(Close); } }
         return Task.CompletedTask;
@@ -162,7 +235,7 @@ public partial class MainWindow : Window
         if (busy) { closeAfterJob = progress?.RequestCancellation() ?? false; return; }
         if (closing) return;
         closing = true; IsEnabled = false; vm.Stop();
-        vm.Settings.TreeWidth = TreeColumn.ActualWidth; vm.Settings.ThumbnailHeight = ThumbnailRow.ActualHeight;
+        vm.Settings.TreeWidth = TreeColumn.ActualWidth; if (vm.Settings.PreviewLayout == "vertical") vm.Settings.ThumbnailHeight = ThumbnailRow.ActualHeight;
         try { if (!diagnostic) vm.Settings.Save(); } catch (Exception error) { AppLog.Write(error.ToString()); }
         try { await worker.DisposeAsync(); } catch (Exception error) { AppLog.Write(error.ToString()); }
         closeReady = true; _ = Dispatcher.BeginInvoke(Close);

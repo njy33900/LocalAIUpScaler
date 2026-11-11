@@ -13,3 +13,8 @@
 The application uses .NET/WPF and CPython. Their runtimes are currently installed separately for development and are not included in a distribution artifact. Future packaging must retain the notices for the exact redistributed runtime binaries, CUDA/cuDNN libraries and image-codec dependencies. Final redistribution review and assembly of those runtime notices belong to the deferred packaging step.
 
 No FastStone code, logo, icons or skin assets are included.
+
+## UI resources
+
+- Lucide `panel-right` and `panel-bottom`: https://github.com/lucide-icons/lucide. Original SVGs retained in `src/Upscaler.Wpf/Assets/`; geometry adapted to WPF Rectangle/Path for theme-aware rendering. Full upstream license retained in `docs/licenses/Lucide-LICENSE.txt`.
+- VirtualizingWrapPanel 2.5.4: https://github.com/sbaeumlisberger/VirtualizingWrapPanel, MIT. Used for responsive thumbnail rows with recycling virtualization. License retained in `docs/licenses/VirtualizingWrapPanel-LICENSE.txt`.

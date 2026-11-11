@@ -93,6 +93,19 @@ class WorkerTests(unittest.TestCase):
             response=self.client.terminal(); self.assertEqual(response['type'],'failed'); self.assertEqual(response['job_id'],'bad')
             self.client.send(type='get_devices',job_id='device-query')
             self.assertEqual(self.client.next()['type'],'device_info')
+    def test_three_preset_tiles_with_full_size_cuda_tiles(self):
+        if not self.client.ready['cuda']: self.skipTest('CUDA unavailable')
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'preset.png'
+            y,x=np.mgrid[:544,:576]
+            Image.fromarray(np.stack((x%256,y%256,(x+y)%256),axis=-1).astype(np.uint8)).save(path)
+            for tile in (128,256,512):
+                self.client.send(type='upscale',job_id=f'preset-{tile}',input=str(path),output_dir=folder,device='cuda',precision='fp16',tile_size=tile)
+                response=self.client.terminal()
+                self.assertEqual(response['type'],'completed',response)
+                self.assertEqual((response['output_width'],response['output_height']),(2304,2176))
+                with Image.open(response['output']) as image:
+                    self.assertEqual(image.size,(2304,2176))
     def test_cuda_fp32_and_jpeg(self):
         if not self.client.ready['cuda']: self.skipTest('CUDA unavailable')
         with tempfile.TemporaryDirectory() as folder:
