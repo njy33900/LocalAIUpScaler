@@ -1,0 +1,18 @@
+# Normalize text while preserving appropriate Windows script line endings.
+* text=auto
+*.cs text eol=lf
+*.csproj text eol=lf
+*.xaml text eol=lf
+*.manifest text eol=lf
+*.sln text eol=crlf
+*.py text eol=lf
+*.ps1 text eol=crlf
+*.md text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+# Preserve third-party license text exactly as supplied by upstream.
+docs/licenses/** -text
+docs/BasicSR-LICENSE.txt -text
+docs/Real-ESRGAN-LICENSE.txt -text

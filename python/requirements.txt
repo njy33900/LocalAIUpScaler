@@ -1,0 +1,4 @@
+torch==2.5.1+cu124
+torchvision==0.20.1+cu124
+Pillow==12.1.1
+numpy==1.26.4
