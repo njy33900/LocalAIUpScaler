@@ -1,0 +1,59 @@
+# .NET / WPF build outputs
+**/bin/
+**/obj/
+**/TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Visual Studio / per-user IDE state
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Model binaries are downloaded and verified by setup_environment.ps1.
+# Keep the pinned checksum and model documentation in source control.
+/models/*
+!/models/SHA256SUMS
+!/models/README.md
+
+# Generated images, test fixtures, rendered UI, logs and packaging outputs
+/artifacts/
+/dist/
+/publish/
+/packages/
+*.log
+*.tmp
+*.download
+*.dmp
+
+# Machine-specific secrets; example configuration may be committed.
+.env
+.env.*
+!.env.example
+!.env.*.example
+.secrets/
+*.pfx
+*.p12
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
