@@ -12,6 +12,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/App.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Resource Include="Assets/App.ico" />
+    <Resource Include="Assets/App.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="VirtualizingWrapPanel" Version="2.5.4" />
+  </ItemGroup>
 </Project>

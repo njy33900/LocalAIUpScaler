@@ -22,14 +22,28 @@ public interface IUpscaleEngine
 
 public sealed class Settings
 {
-    public string Folder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-    public string Output { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Upscaled");
+    private static string DefaultPictures
+    {
+        get
+        {
+            var pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+            if (!string.IsNullOrEmpty(pictures)) return pictures;
+            var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return Path.Combine(string.IsNullOrEmpty(profile) ? Path.GetTempPath() : profile, "Pictures");
+        }
+    }
+    public string Folder { get; set; } = DefaultPictures;
+    public string Output { get; set; } = Path.Combine(DefaultPictures, "Upscaled");
     public string Device { get; set; } = "auto";
     public string Precision { get; set; } = "auto";
     public string Format { get; set; } = "PNG";
     public int Tile { get; set; }
+    public string? TilePreset { get; set; }
     public double TreeWidth { get; set; } = 220;
     public double ThumbnailHeight { get; set; } = 170;
+    public string PreviewLayout { get; set; } = "vertical";
+    public string ThumbnailSort { get; set; } = "name";
+    public bool ThumbnailDescending { get; set; }
     public string Theme { get; set; } = "dark";
     public static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAIUpscaler");
 
@@ -54,6 +68,8 @@ public sealed class Settings
             value.TreeWidth = double.IsFinite(value.TreeWidth) ? Math.Clamp(value.TreeWidth, 140, 500) : 220;
             value.ThumbnailHeight = double.IsFinite(value.ThumbnailHeight) ? Math.Clamp(value.ThumbnailHeight, 100, 350) : 170;
             value.Theme = "dark";
+            if (value.ThumbnailSort is not ("name" or "modified" or "size")) value.ThumbnailSort = "name";
+            if (value.PreviewLayout is not ("horizontal" or "vertical")) value.PreviewLayout = "vertical";
             return value;
         }
         catch { return new(); }
