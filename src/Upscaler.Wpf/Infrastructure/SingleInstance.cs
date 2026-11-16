@@ -113,6 +113,7 @@ public sealed class SingleInstance : IDisposable
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or UnauthorizedAccessException)
         {
+            Console.Error.WriteLine(error.ToString());
             Upscaler.Core.AppLog.Write("기존 창 활성화 요청 실패: " + error.Message);
             return false;
         }

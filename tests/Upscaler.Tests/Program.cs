@@ -15,7 +15,10 @@ using Upscaler.Wpf;
 
 internal static class Program
 {
-    static int passed, failed;
+    static int passed, failed, skipped;
+    private sealed class SkippedTestException(string message) : Exception(message)
+    {
+    }
     static readonly string Root = FindRoot();
     static string FindRoot()
     {
@@ -53,6 +56,11 @@ internal static class Program
             await test();
             passed++;
             Console.WriteLine("PASS " + name);
+        }
+        catch (SkippedTestException e)
+        {
+            skipped++;
+            Console.WriteLine("SKIP " + name + ": " + e.Message);
         }
         catch (Exception e)
         {
@@ -134,7 +142,7 @@ internal static class Program
             }
             finally
             {
-                Console.WriteLine($"{passed} passed, {failed} failed");
+                Console.WriteLine($"{passed} passed, {failed} failed, {skipped} skipped");
                 app.Shutdown(failed == 0 ? 0 : 1);
             }
         });
@@ -812,13 +820,24 @@ internal static class Program
                 var start = new ProcessStartInfo(Environment.ProcessPath!)
                 {
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
                 };
                 start.ArgumentList.Add("--instance-probe");
                 start.ArgumentList.Add(name);
                 using var child = Process.Start(start)!;
                 await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-                Check(child.ExitCode == 0, "second process entered primary mode");
+                var childOutput = await child.StandardOutput.ReadToEndAsync();
+                var childError = await child.StandardError.ReadToEndAsync();
+                if (child.ExitCode == 3 &&
+                    Environment.GetEnvironmentVariable("CODEX_WINDOWS_SANDBOX_PACKAGE_FAMILY") is not null &&
+                    childError.Contains("System.UnauthorizedAccessException", StringComparison.Ordinal))
+                {
+                    throw new SkippedTestException("Codex sandbox denies named-pipe access between processes");
+                }
+
+                Check(child.ExitCode == 0, $"instance probe exited {child.ExitCode}: {childOutput} {childError}");
                 await activation.Task.WaitAsync(TimeSpan.FromSeconds(2));
             }
 
