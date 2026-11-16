@@ -5,17 +5,20 @@ using System.Text.Json;
 using System.Windows.Media.Imaging;
 
 namespace Upscaler.Wpf;
-
 // Each slot owns one lazy, persistent decoder. Queue cancellation never kills a
 // healthy decoder: finish the current image and discard its result if obsolete.
 internal sealed class ThumbnailDecoder(string root) : IDisposable
 {
+    // 슬롯 하나가 요청 한 개와 디코더 한 개를 독점하여 JSONL 응답 순서를 보장한다.
     private readonly SemaphoreSlim available = new(3, 3);
     private readonly Stack<Session> idle = new();
     private readonly HashSet<Session> sessions = new();
     private readonly object gate = new();
     private bool disposed;
-    public int Starts { get; private set; }
+    public int Starts
+    {
+        get; private set;
+    }
 
     public async Task<BitmapSource> DecodeAsync(string path, CancellationToken request, CancellationToken lifetime)
     {
@@ -29,35 +32,62 @@ internal sealed class ThumbnailDecoder(string root) : IDisposable
                 lock (gate)
                 {
                     ObjectDisposedException.ThrowIf(disposed, this);
-                    if (idle.Count > 0) session = idle.Pop();
-                    else { session = new Session(root); sessions.Add(session); Starts++; }
+                    if (idle.Count > 0)
+                        session = idle.Pop();
+                    else
+                    {
+                        session = new Session(root);
+                        sessions.Add(session);
+                        Starts++;
+                    }
                 }
+
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
                 deadline.CancelAfter(TimeSpan.FromSeconds(30));
                 try
                 {
-                    await session.Process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { path }).AsMemory(), deadline.Token);
-                    var line = await session.Process.StandardOutput.ReadLineAsync(deadline.Token)
-                        ?? throw new IOException("썸네일 디코더가 종료되었습니다.");
+                    await session.Process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new
+                    {
+                        path
+                    }).AsMemory(), deadline.Token);
+                    var line = await session.Process.StandardOutput.ReadLineAsync(deadline.Token) ?? throw new IOException("썸네일 디코더가 종료되었습니다.");
                     using var response = JsonDocument.Parse(line);
                     if (response.RootElement.TryGetProperty("error", out var error))
                         throw new InvalidDataException(error.GetString());
                     using var buffer = new MemoryStream(Convert.FromBase64String(response.RootElement.GetProperty("png").GetString()!));
-                    var bitmap = new BitmapImage(); bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmap.StreamSource = buffer; bitmap.EndInit(); bitmap.Freeze();
+                    var bitmap = new BitmapImage();
+                    bitmap.BeginInit();
+                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                    bitmap.StreamSource = buffer;
+                    bitmap.EndInit();
+                    bitmap.Freeze();
                     return (BitmapSource)bitmap;
                 }
-                catch (InvalidDataException) { throw; } // Per-image errors leave the protocol synchronized.
+                catch (InvalidDataException)
+                {
+                    throw;
+                } // Per-image errors leave the protocol synchronized.
                 catch
                 {
-                    lock (gate) { sessions.Remove(session); session.Dispose(); session = null; }
+                    lock (gate)
+                    {
+                        sessions.Remove(session);
+                        session.Dispose();
+                        session = null;
+                    }
+
                     throw;
                 }
             }, request);
         }
         finally
         {
-            lock (gate) { if (session is not null && !disposed) idle.Push(session); }
+            lock (gate)
+            {
+                if (session is not null && !disposed)
+                    idle.Push(session);
+            }
+
             available.Release();
         }
     }
@@ -67,33 +97,56 @@ internal sealed class ThumbnailDecoder(string root) : IDisposable
         lock (gate)
         {
             disposed = true;
-            foreach (var session in sessions) session.Dispose();
-            sessions.Clear(); idle.Clear();
+            foreach (var session in sessions)
+                session.Dispose();
+            sessions.Clear();
+            idle.Clear();
         }
     }
 
     private sealed class Session : IDisposable
     {
         private int disposed;
-        public Process Process { get; }
+        public Process Process
+        {
+            get;
+        }
+
         public Session(string root)
         {
             var start = new ProcessStartInfo(Path.Combine(root, ".venv", "Scripts", "python.exe"))
             {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
-                StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardInputEncoding = new UTF8Encoding(false),
+                StandardOutputEncoding = Encoding.UTF8
             };
             start.Environment["PYTHONUTF8"] = "1";
             start.ArgumentList.Add(Path.Combine(root, "python", "decode.py"));
             start.ArgumentList.Add("--thumbnail-server");
             Process = Process.Start(start) ?? throw new IOException("썸네일 디코더를 시작하지 못했습니다.");
-            Process.ErrorDataReceived += (_, _) => { }; Process.BeginErrorReadLine();
+            Process.ErrorDataReceived += (_, _) =>
+            {
+            };
+            Process.BeginErrorReadLine();
         }
+
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
-            try { if (!Process.HasExited) Process.Kill(true); } catch (InvalidOperationException) { }
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+            try
+            {
+                if (!Process.HasExited)
+                    Process.Kill(true);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
             Process.Dispose();
         }
     }

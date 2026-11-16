@@ -18,3 +18,5 @@ No FastStone code, logo, icons or skin assets are included.
 
 - Lucide `panel-right` and `panel-bottom`: https://github.com/lucide-icons/lucide. Original SVGs retained in `src/Upscaler.Wpf/Assets/`; geometry adapted to WPF Rectangle/Path for theme-aware rendering. Full upstream license retained in `docs/licenses/Lucide-LICENSE.txt`.
 - VirtualizingWrapPanel 2.5.4: https://github.com/sbaeumlisberger/VirtualizingWrapPanel, MIT. Used for responsive thumbnail rows with recycling virtualization. License retained in `docs/licenses/VirtualizingWrapPanel-LICENSE.txt`.
+
+- `python/srvgg_arch.py`: official Real-ESRGAN SRVGGNetCompact architecture, BSD-3-Clause. BasicSR registry import/decorator removed for standalone loading; full license in `Real-ESRGAN-LICENSE.txt`. Model assets: official v0.2.2.4 anime_6B and v0.2.5.0 general/weak-denoise releases. SHA256 values pinned in `models/SHA256SUMS`.

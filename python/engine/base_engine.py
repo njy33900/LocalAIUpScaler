@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 
+
 class BaseEngine(ABC):
     """Structural extension point; no plugin discovery or additional engines."""
+
     engine_id: str
     scale: int
 
