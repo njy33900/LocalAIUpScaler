@@ -25,6 +25,7 @@ if (-not $VerifyOnly) {
         }
     }
 }
+if (-not $VerifyOnly) { & ./scripts/install_models.ps1 }
 & ./.venv/Scripts/python.exe -m pip check
 if ($LASTEXITCODE -ne 0) { throw '패키지 호환성 검사 실패' }
 & ./.venv/Scripts/python.exe scripts/verify_environment.py

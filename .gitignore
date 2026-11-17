@@ -57,3 +57,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local recovery snapshots and personal settings
+/recovery/

@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+
 namespace Upscaler.Wpf;
 
 public partial class App : Application
@@ -19,8 +20,10 @@ public partial class App : Application
                 Shutdown();
                 return;
             }
+
             instance.Listen(() => Dispatcher.BeginInvoke(ActivateExistingWindow));
-            var window = new MainWindow(); MainWindow = window;
+            var window = new MainWindow();
+            MainWindow = window;
             ShutdownMode = ShutdownMode.OnMainWindowClose;
             window.Show();
         }
@@ -31,22 +34,33 @@ public partial class App : Application
             Shutdown(1);
         }
     }
+
     public static Window ActivationTarget(Window window)
     {
         // Confirmation dialogs can be owned by the progress modal; activate the deepest visible owner.
         var child = window.OwnedWindows.Cast<Window>().LastOrDefault(w => w.IsVisible);
         return child is null ? window : ActivationTarget(child);
     }
+
     private void ActivateExistingWindow()
     {
-        if (MainWindow is null) return;
-        if (MainWindow.WindowState == WindowState.Minimized) MainWindow.WindowState = WindowState.Normal;
+        if (MainWindow is null)
+            return;
+        if (MainWindow.WindowState == WindowState.Minimized)
+            MainWindow.WindowState = WindowState.Normal;
         var target = ActivationTarget(MainWindow);
-        if (target.WindowState == WindowState.Minimized) target.WindowState = WindowState.Normal;
+        if (target.WindowState == WindowState.Minimized)
+            target.WindowState = WindowState.Normal;
         target.Activate();
         _ = SetForegroundWindow(new WindowInteropHelper(target).Handle);
     }
-    protected override void OnExit(ExitEventArgs e) { instance?.Dispose(); base.OnExit(e); }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        instance?.Dispose();
+        base.OnExit(e);
+    }
+
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hwnd);
 }

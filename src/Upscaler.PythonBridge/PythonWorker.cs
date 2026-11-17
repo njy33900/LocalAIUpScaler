@@ -7,8 +7,14 @@ namespace Upscaler.PythonBridge;
 
 public sealed record WorkerOptions
 {
-    public string? PythonPath { get; init; }
-    public string? WorkerPath { get; init; }
+    public string? PythonPath
+    {
+        get; init;
+    }
+    public string? WorkerPath
+    {
+        get; init;
+    }
     public TimeSpan StartupTimeout { get; init; } = TimeSpan.FromSeconds(90);
     public TimeSpan CancelTimeout { get; init; } = TimeSpan.FromSeconds(15);
     public TimeSpan JobTimeout { get; init; } = TimeSpan.FromMinutes(30);
@@ -16,10 +22,13 @@ public sealed record WorkerOptions
 
 public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
 {
+    // 응답 대기 상태를 프로세스 세션별로 격리한다. 이전 세션의 응답이나 종료가
+    // 재시작한 프로세스의 작업을 완료시키지 않도록 이 경계를 유지해야 한다.
     private sealed class Session(Process process)
     {
         public Process Process { get; } = process;
         public TaskCompletionSource<JsonElement> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource<JsonElement>? Pending;
         public string? JobId;
         public bool Stopped;
@@ -27,16 +36,24 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
         public Task Errors = Task.CompletedTask;
     }
 
+    // 시작과 추론을 직렬화한다. Worker 하나에는 한 번에 한 작업만 보낸다.
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
     private readonly WorkerOptions options;
     private Session? session;
     private bool disposed;
-    public string Root { get; }
+    public string Root
+    {
+        get;
+    }
     public int? ProcessId => session is { Process.HasExited: false } s ? s.Process.Id : null;
+
     public event Action<JsonElement>? Progress;
     public event Action<string>? StatusChanged;
-    public JsonElement DeviceInfo { get; private set; }
+    public JsonElement DeviceInfo
+    {
+        get; private set;
+    }
 
     public PythonWorker(string root, WorkerOptions? options = null)
     {
@@ -48,8 +65,14 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.Token);
         await gate.WaitAsync(linked.Token);
-        try { await EnsureStartedAsync(linked.Token); }
-        finally { gate.Release(); }
+        try
+        {
+            await EnsureStartedAsync(linked.Token);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private async Task<Session> EnsureStartedAsync(CancellationToken token)
@@ -57,13 +80,19 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         if (session is { Process.HasExited: false } existing && existing.Ready.Task.IsCompletedSuccessfully)
             return existing;
-        if (session is not null) await StopSessionAsync(session);
+        if (session is not null)
+            await StopSessionAsync(session);
         StatusChanged?.Invoke("Worker 준비 중…");
         var start = new ProcessStartInfo(options.PythonPath ?? Path.Combine(Root, ".venv", "Scripts", "python.exe"))
         {
-            WorkingDirectory = Root, UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
-            StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8,
+            WorkingDirectory = Root,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardInputEncoding = new UTF8Encoding(false),
+            StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
         start.ArgumentList.Add("-u");
@@ -75,8 +104,7 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
         try
         {
             DeviceInfo = await current.Ready.Task.WaitAsync(options.StartupTimeout, token);
-            StatusChanged?.Invoke(DeviceInfo.TryGetProperty("cuda", out var cuda) && cuda.GetBoolean()
-                ? "Worker 준비됨 · CUDA / CPU" : "Worker 준비됨 · CPU");
+            StatusChanged?.Invoke(DeviceInfo.TryGetProperty("cuda", out var cuda) && cuda.GetBoolean() ? "Worker 준비됨 · CUDA / CPU" : "Worker 준비됨 · CPU");
             return current;
         }
         catch
@@ -98,13 +126,17 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
                 if (message.GetProperty("protocol_version").GetInt32() != 1)
                     throw new IOException("Worker 프로토콜 버전이 다릅니다.");
                 var type = message.GetProperty("type").GetString();
-                if (type == "ready") current.Ready.TrySetResult(message);
+                if (type == "ready")
+                    current.Ready.TrySetResult(message);
                 else if (message.TryGetProperty("job_id", out var id) && id.GetString() == current.JobId)
                 {
-                    if (type is "completed" or "failed" or "cancelled") current.Pending?.TrySetResult(message);
-                    else if (type == "progress") Progress?.Invoke(message);
+                    if (type is "completed" or "failed" or "cancelled")
+                        current.Pending?.TrySetResult(message);
+                    else if (type == "progress")
+                        Progress?.Invoke(message);
                 }
             }
+
             throw new IOException("Worker가 종료되었습니다. 다음 실행 시 다시 시작합니다.");
         }
         catch (Exception error)
@@ -121,10 +153,18 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
         {
             while (await current.Process.StandardError.ReadLineAsync() is { } line)
             {
-                try { AppLog.Write(line); } catch { }
+                try
+                {
+                    AppLog.Write(line);
+                }
+                catch
+                {
+                }
             }
         }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { }
+        catch (Exception error) when (error is IOException or ObjectDisposedException)
+        {
+        }
     }
 
     public async Task<JsonElement> UpscaleAsync(string input, Settings settings, CancellationToken token)
@@ -142,9 +182,20 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
             current.JobId = id;
             current.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
             temporary = Path.Combine(Path.GetFullPath(settings.Output), $".upscaler-{id}.tmp");
-            await SendAsync(current, new { protocol_version = 1, type = "upscale", job_id = id,
-                input = Path.GetFullPath(input), output_dir = Path.GetFullPath(settings.Output),
-                device = settings.Device, precision = settings.Precision, format = settings.Format, tile_size = settings.Tile });
+            await SendAsync(current, new
+            {
+                protocol_version = 1,
+                type = "upscale",
+                job_id = id,
+                input = Path.GetFullPath(input),
+                output_dir = Path.GetFullPath(settings.Output),
+                device = settings.Device,
+                precision = settings.Precision,
+                format = settings.Format,
+                model = settings.Model,
+                denoise = settings.Denoise,
+                tile_size = settings.Tile
+            });
             try
             {
                 return await current.Pending.Task.WaitAsync(options.JobTimeout, linked.Token);
@@ -152,7 +203,8 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
             catch (OperationCanceledException)
             {
                 var terminal = await CancelAndWaitAsync(current);
-                if (terminal is { } result && result.GetProperty("type").GetString() is "completed" or "failed") return result;
+                if (terminal is { } result && result.GetProperty("type").GetString() is "completed" or "failed")
+                    return result;
                 throw new OperationCanceledException(linked.Token);
             }
             catch (TimeoutException)
@@ -169,12 +221,24 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
         }
         finally
         {
-            if (current is not null) { current.JobId = null; current.Pending = null; }
+            if (current is not null)
+            {
+                current.JobId = null;
+                current.Pending = null;
+            }
+
             if (temporary is not null)
             {
-                try { File.Delete(temporary); }
-                catch (Exception error) { AppLog.Write("임시 파일 정리 실패: " + error); }
+                try
+                {
+                    File.Delete(temporary);
+                }
+                catch (Exception error)
+                {
+                    AppLog.Write("임시 파일 정리 실패: " + error);
+                }
             }
+
             gate.Release();
         }
     }
@@ -184,10 +248,20 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
         StatusChanged?.Invoke("작업 취소 및 정리 중…");
         try
         {
-            await SendAsync(current, new { protocol_version = 1, type = "cancel", job_id = current.JobId });
-            if (current.Pending is not null) return await current.Pending.Task.WaitAsync(options.CancelTimeout);
+            await SendAsync(current, new
+            {
+                protocol_version = 1,
+                type = "cancel",
+                job_id = current.JobId
+            });
+            if (current.Pending is not null)
+                return await current.Pending.Task.WaitAsync(options.CancelTimeout);
         }
-        catch { await StopSessionAsync(current); }
+        catch
+        {
+            await StopSessionAsync(current);
+        }
+
         return null;
     }
 
@@ -199,24 +273,28 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
 
     private async Task StopSessionAsync(Session current)
     {
-        if (current.Stopped) return;
+        if (current.Stopped)
+            return;
         current.Stopped = true;
         try
         {
-            if (!current.Process.HasExited) current.Process.Kill(entireProcessTree: true);
+            if (!current.Process.HasExited)
+                current.Process.Kill(entireProcessTree: true);
             await current.Process.WaitForExitAsync();
             await Task.WhenAll(current.Reader, current.Errors);
         }
         finally
         {
             current.Process.Dispose();
-            if (ReferenceEquals(session, current)) session = null;
+            if (ReferenceEquals(session, current))
+                session = null;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (disposed) return;
+        if (disposed)
+            return;
         lifetime.Cancel();
         await gate.WaitAsync();
         try
@@ -225,14 +303,26 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
             {
                 try
                 {
-                    await SendAsync(current, new { protocol_version = 1, type = "shutdown", job_id = "" });
+                    await SendAsync(current, new
+                    {
+                        protocol_version = 1,
+                        type = "shutdown",
+                        job_id = ""
+                    });
                     await current.Process.WaitForExitAsync().WaitAsync(options.CancelTimeout);
                 }
-                catch { }
+                catch
+                {
+                }
+
                 await StopSessionAsync(current);
             }
+
             disposed = true;
         }
-        finally { gate.Release(); }
+        finally
+        {
+            gate.Release();
+        }
     }
 }

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+
 namespace Upscaler.Core;
 
 public class Observable : INotifyPropertyChanged
@@ -9,8 +10,11 @@ public class Observable : INotifyPropertyChanged
     protected void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
     protected bool Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-        field = value; Changed(name); return true;
+        if (EqualityComparer<T>.Default.Equals(field, value))
+            return false;
+        field = value;
+        Changed(name);
+        return true;
     }
 }
 
@@ -27,33 +31,57 @@ public sealed class Settings
         get
         {
             var pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-            if (!string.IsNullOrEmpty(pictures)) return pictures;
+            if (!string.IsNullOrEmpty(pictures))
+                return pictures;
             var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             return Path.Combine(string.IsNullOrEmpty(profile) ? Path.GetTempPath() : profile, "Pictures");
         }
     }
+
     public string Folder { get; set; } = DefaultPictures;
     public string Output { get; set; } = Path.Combine(DefaultPictures, "Upscaled");
     public string Device { get; set; } = "auto";
     public string Precision { get; set; } = "auto";
     public string Format { get; set; } = "PNG";
-    public int Tile { get; set; }
-    public string? TilePreset { get; set; }
+    public int Tile
+    {
+        get; set;
+    }
+    public string? TilePreset
+    {
+        get; set;
+    }
     public double TreeWidth { get; set; } = 220;
     public double ThumbnailHeight { get; set; } = 170;
     public string PreviewLayout { get; set; } = "vertical";
     public string ThumbnailSort { get; set; } = "name";
-    public bool ThumbnailDescending { get; set; }
+    public bool ThumbnailDescending
+    {
+        get; set;
+    }
+    public string Model { get; set; } = "RealESRGAN_x4plus";
+    public double Denoise { get; set; } = 0.5;
+
     public string Theme { get; set; } = "dark";
     public static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAIUpscaler");
 
     public void Validate()
     {
-        if (Device is not ("auto" or "cuda" or "cpu")) throw new ArgumentException("장치 설정이 올바르지 않습니다.");
-        if (Precision is not ("auto" or "fp16" or "fp32")) throw new ArgumentException("정밀도 설정이 올바르지 않습니다.");
-        if (Format is not ("PNG" or "JPEG")) throw new ArgumentException("출력 형식이 올바르지 않습니다.");
-        if (Tile != 0 && (Tile < 32 || Tile > 2048)) throw new ArgumentException("타일 크기는 0(자동) 또는 32~2048이어야 합니다.");
-        if (string.IsNullOrWhiteSpace(Output) || !Path.IsPathFullyQualified(Output)) throw new ArgumentException("출력 폴더의 전체 경로를 입력하세요.");
+        if (Model is not ("RealESRGAN_x4plus" or "RealESRGAN_x4plus_anime_6B" or "realesr-general-x4v3"))
+            throw new ArgumentException("지원하지 않는 모델입니다.");
+        if (!double.IsFinite(Denoise) || Denoise < 0 || Denoise > 1)
+            throw new ArgumentException("노이즈 강도는 0~1이어야 합니다.");
+
+        if (Device is not ("auto" or "cuda" or "cpu"))
+            throw new ArgumentException("장치 설정이 올바르지 않습니다.");
+        if (Precision is not ("auto" or "fp16" or "fp32"))
+            throw new ArgumentException("정밀도 설정이 올바르지 않습니다.");
+        if (Format is not ("PNG" or "JPEG"))
+            throw new ArgumentException("출력 형식이 올바르지 않습니다.");
+        if (Tile != 0 && (Tile < 32 || Tile > 2048))
+            throw new ArgumentException("타일 크기는 0(자동) 또는 32~2048이어야 합니다.");
+        if (string.IsNullOrWhiteSpace(Output) || !Path.IsPathFullyQualified(Output))
+            throw new ArgumentException("출력 폴더의 전체 경로를 입력하세요.");
         _ = Path.GetFullPath(Output);
     }
 
@@ -64,15 +92,21 @@ public sealed class Settings
         {
             var value = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path ?? Path.Combine(DirectoryPath, "settings.json"))) ?? new();
             value.Validate();
-            if (string.IsNullOrWhiteSpace(value.Folder)) value.Folder = new Settings().Folder;
+            if (string.IsNullOrWhiteSpace(value.Folder))
+                value.Folder = new Settings().Folder;
             value.TreeWidth = double.IsFinite(value.TreeWidth) ? Math.Clamp(value.TreeWidth, 140, 500) : 220;
             value.ThumbnailHeight = double.IsFinite(value.ThumbnailHeight) ? Math.Clamp(value.ThumbnailHeight, 100, 350) : 170;
             value.Theme = "dark";
-            if (value.ThumbnailSort is not ("name" or "modified" or "size")) value.ThumbnailSort = "name";
-            if (value.PreviewLayout is not ("horizontal" or "vertical")) value.PreviewLayout = "vertical";
+            if (value.ThumbnailSort is not ("name" or "modified" or "size"))
+                value.ThumbnailSort = "name";
+            if (value.PreviewLayout is not ("horizontal" or "vertical"))
+                value.PreviewLayout = "vertical";
             return value;
         }
-        catch { return new(); }
+        catch
+        {
+            return new();
+        }
     }
 
     public void Save(string? path = null)
@@ -80,23 +114,40 @@ public sealed class Settings
         path ??= Path.Combine(DirectoryPath, "settings.json");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try { File.WriteAllText(temporary, JsonSerializer.Serialize(this)); File.Move(temporary, path, true); }
-        finally { File.Delete(temporary); }
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(this));
+            File.Move(temporary, path, true);
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
     }
 }
 
 public static class Images
 {
     public static readonly HashSet<string> Extensions = new(StringComparer.OrdinalIgnoreCase)
-        { ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp" };
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".webp"
+    };
     public static string[] Scan(string folder, CancellationToken token = default)
     {
         var files = new List<string>();
         foreach (var path in Directory.EnumerateFiles(folder))
         {
             token.ThrowIfCancellationRequested();
-            if (Extensions.Contains(Path.GetExtension(path))) files.Add(path);
+            if (Extensions.Contains(Path.GetExtension(path)))
+                files.Add(path);
         }
+
         return files.OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase).ToArray();
     }
 }
@@ -116,7 +167,9 @@ public static class AppLog
                     File.Move(path, path + ".previous", true);
                 File.AppendAllText(path, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}");
             }
-            catch { /* Logging must not prevent cleanup or stderr draining. */ }
+            catch
+            { /* Logging must not prevent cleanup or stderr draining. */
+            }
         }
     }
 }

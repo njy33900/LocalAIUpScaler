@@ -57,3 +57,15 @@ Windows용 로컬 Real-ESRGAN x4 이미지 업스케일러입니다. WPF에서 �
 C# 테스트는 외부 테스트 프레임워크 의존성이 없는 실행형 하네스이며 실패 시 비정상 종료 코드를 반환합니다. CUDA가 없으면 하드웨어 전용 Python 테스트는 건너뜁니다.
 
 [검증 결과](docs/development-status.md) · [프로토콜](docs/protocol.md) · [문제 해결](docs/troubleshooting.md) · [설계 결정](docs/design-decisions.md) · [라이선스](docs/third-party-notices.md)
+
+코드 분석과 유지보수: [코드 구조·서식·리팩토링 기준](docs/code-guide.md).
+
+## 추가 모델
+
+`./scripts/install_models.ps1`로 공식 가중치를 설치합니다. 이미 설치된 파일과 다운로드 파일은 SHA256을 확인하며 추론 중에는 네트워크를 사용하지 않습니다.
+
+- 범용 x4plus: 기존 기본값, RRDB 23블록.
+- 애니메이션 anime_6B: 선화/일러스트용, RRDB 6블록.
+- 경량 general-x4v3: SRVGG 32개 중간 컨볼루션. 노이즈 제거 0~1 지원, 기본 0.5. general과 weak-denoise 가중치를 공식 DNI 방식으로 보간합니다.
+
+모델 선택은 단일 이미지와 폴더 작업 모두에 적용되고 설정에 저장됩니다. 모델이 바뀌면 기존 모델을 해제하고 새 네트워크를 로드합니다. VRAM 안내는 기존 x4plus 측정 기반의 참고치이며 모델마다 실제 사용량이 다릅니다. HAT/SUPIR/DiffBIR/GFPGAN은 이번 단계에 포함하지 않습니다.
