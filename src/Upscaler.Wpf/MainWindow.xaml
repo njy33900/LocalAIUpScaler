@@ -13,6 +13,30 @@
     Drop="OnDrop"
     Closing="OnClosing"
     PreviewKeyDown="WindowKeyDown">
+    <Window.Resources>
+        <Style x:Key="ProcessingTabStyle" TargetType="TabItem">
+            <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBackground" Background="{StaticResource RaisedBrush}" Padding="10,8" Margin="0,0,4,6" CornerRadius="4">
+                            <ContentPresenter ContentSource="Header" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBackground" Property="Background" Value="{StaticResource SelectionBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="TabBackground" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="TabBackground" Property="BorderThickness" Value="1" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid
         Background="{StaticResource BackgroundBrush}"
         TextElement.Foreground="{StaticResource ForegroundBrush}"
@@ -545,6 +569,7 @@
                             Background="Transparent" />
                     </StackPanel>
                     <StackPanel
+                        x:Name="ProcessingHeader"
                         DockPanel.Dock="Top"
                         Margin="0,0,0,16">
                         <TextBlock
@@ -571,6 +596,8 @@
                                 VerticalAlignment="Center" />
                         </DockPanel>
                     </StackPanel>
+                    <TabControl x:Name="ProcessingTabs" SelectionChanged="ProcessingModeChanged" Background="{StaticResource PanelBrush}" BorderThickness="0">
+                    <TabItem Header="업스케일링" Style="{StaticResource ProcessingTabStyle}">
                     <ScrollViewer
                         x:Name="SettingsScroll"
                         VerticalScrollBarVisibility="Auto"
@@ -694,6 +721,13 @@
                                 Margin="0,8,0,0" />
                         </StackPanel>
                     </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="고급 복원" Style="{StaticResource ProcessingTabStyle}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <local:RestorationPanel />
+                        </ScrollViewer>
+                    </TabItem>
+                    </TabControl>
                 </DockPanel>
             </Border>
         </Grid>

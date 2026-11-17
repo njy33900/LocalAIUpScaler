@@ -69,3 +69,7 @@ C# 테스트는 외부 테스트 프레임워크 의존성이 없는 실행형 �
 - 경량 general-x4v3: SRVGG 32개 중간 컨볼루션. 노이즈 제거 0~1 지원, 기본 0.5. general과 weak-denoise 가중치를 공식 DNI 방식으로 보간합니다.
 
 모델 선택은 단일 이미지와 폴더 작업 모두에 적용되고 설정에 저장됩니다. 모델이 바뀌면 기존 모델을 해제하고 새 네트워크를 로드합니다. VRAM 안내는 기존 x4plus 측정 기반의 참고치이며 모델마다 실제 사용량이 다릅니다. HAT/SUPIR/DiffBIR/GFPGAN은 이번 단계에 포함하지 않습니다.
+
+## 고급 복원
+
+별도 고급 복원 탭에서 SUPIR Q/F 및 DiffBIR v2.1을 사용합니다. 설치와 실제 추론 검증 후 활성화됩니다. [설치 안내](docs/advanced-model-installation.md), [구조와 제한](docs/advanced-restoration.md), [라이선스](docs/advanced-licenses.md)를 참고하세요.

@@ -67,7 +67,7 @@ public sealed class ProgressWindow : ThemedWindow
         this.paths = paths;
         this.settings = settings;
         cancel = CancellationTokenSource.CreateLinkedTokenSource(externalCancellation);
-        Title = "이미지 업스케일링";
+        Title = settings.Restoration is null ? "이미지 업스케일링" : "고급 복원";
         Width = 580;
         SizeToContent = SizeToContent.Height;
         MinHeight = 300;
@@ -78,7 +78,7 @@ public sealed class ProgressWindow : ThemedWindow
         {
             Margin = new(24)
         };
-        panel.Children.Add(new TextBlock { Text = $"이미지 업스케일링 · {paths.Length}개", FontSize = 22 });
+        panel.Children.Add(new TextBlock { Text = $"{Title} · {paths.Length}개", FontSize = 22 });
         panel.Children.Add(file);
         panel.Children.Add(bar);
         panel.Children.Add(counts);
@@ -182,6 +182,8 @@ public sealed class ProgressWindow : ThemedWindow
             {
                 "decoding" => "이미지 확인 중",
                 "loading" => "모델 준비 중",
+                "stage1" => "Stage 1 · 열화 제거 중",
+                "stage2" => "Stage 2 · 생성형 복원 중",
                 "saving" => "결과 저장 중",
                 "retry" => "메모리 부족으로 작은 타일로 재시도 중",
                 _ => "추론 중"

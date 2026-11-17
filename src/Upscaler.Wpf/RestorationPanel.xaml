@@ -1,0 +1,46 @@
+<UserControl x:Class="Upscaler.Wpf.RestorationPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Margin="0,8,2,0">
+        <TextBlock Text="고급 복원" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock Text="생성형 복원은 원본에 없던 세부 사항을 생성할 수 있습니다." TextWrapping="Wrap" Margin="0,8,0,12" />
+        <ComboBox ItemsSource="{Binding Advanced.Engines}" DisplayMemberPath="Label" SelectedValuePath="Id" SelectedValue="{Binding Advanced.Engine}" AutomationProperties.Name="고급 복원 엔진" />
+        <TextBlock Text="{Binding Advanced.Status}" TextWrapping="Wrap" Margin="0,8,0,8" FontSize="11" />
+        <Button Content="설치 상태 다시 확인" Click="Refresh" Margin="0,0,0,6" />
+        <Button Content="설치 / 모델 경로 설정" Click="Configure" Margin="0,0,0,12" />
+        <TextBlock Text="출력 배율" />
+        <ComboBox ItemsSource="{Binding Advanced.Scales}" SelectedItem="{Binding Advanced.Scale}" IsEnabled="{Binding Advanced.IsReady}" Margin="0,4,0,10" />
+        <TextBlock Text="품질 프리셋 (원본 동일성 보장 아님)" TextWrapping="Wrap" />
+        <ComboBox ItemsSource="{Binding Advanced.Presets}" DisplayMemberPath="Label" SelectedValuePath="Id" SelectedValue="{Binding Advanced.Preset}" Margin="0,4,0,10" />
+        <TextBlock Text="시드 (-1: 자동)" />
+        <TextBox Text="{Binding Advanced.Seed, UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" Margin="0,4,0,10" />
+        <TextBlock Text="장치: CUDA · 캡셔너 없음" Margin="0,0,0,10" />
+        <Expander Header="고급 복원 설정">
+            <StackPanel Margin="0,8,0,8">
+                <TextBlock Text="샘플링 스텝 (1–100)" />
+                <TextBox Text="{Binding Advanced.Steps, ValidatesOnExceptions=True}" />
+                <TextBlock Text="CFG (1–20)" Margin="0,8,0,0" />
+                <TextBox Text="{Binding Advanced.Cfg, ValidatesOnExceptions=True}" />
+                <TextBlock Text="SUPIR: control scale (0–2)" Margin="0,8,0,0" />
+                <TextBox Text="{Binding Advanced.Strength, ValidatesOnExceptions=True}" IsEnabled="{Binding Advanced.IsSupir}" />
+                <TextBlock Text="DiffBIR: noise augmentation (0–1000)" Margin="0,8,0,0" />
+                <TextBox Text="{Binding Advanced.NoiseAug, ValidatesOnExceptions=True}" IsEnabled="{Binding Advanced.IsDiffbir}" />
+                <TextBlock Text="Positive prompt" Margin="0,8,0,0" />
+                <TextBox Text="{Binding Advanced.Positive}" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="90" VerticalScrollBarVisibility="Auto" />
+                <TextBlock Text="Negative prompt" Margin="0,8,0,0" />
+                <TextBox Text="{Binding Advanced.Negative}" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="90" VerticalScrollBarVisibility="Auto" />
+                <TextBlock Text="SUPIR: 색 보정" Margin="0,8,0,0" />
+                <ComboBox SelectedValue="{Binding Advanced.ColorFix}" SelectedValuePath="Content" IsEnabled="{Binding Advanced.IsSupir}">
+                    <ComboBoxItem Content="Wavelet" /><ComboBoxItem Content="AdaIn" /><ComboBoxItem Content="None" />
+                </ComboBox>
+                <CheckBox Content="타일 메모리 절약" IsChecked="{Binding Advanced.Tiled}" Margin="0,8,0,0" />
+                <TextBlock Text="DiffBIR: EDM DPM++ 3M SDE · Stage 1 + Stage 2" TextWrapping="Wrap" FontSize="11" Margin="0,8,0,0" />
+            </StackPanel>
+        </Expander>
+        <TextBlock Text="출력 폴더 (폴더 처리 시 원본폴더명_UpScaled 하위 저장)" TextWrapping="Wrap" />
+        <TextBox Text="{Binding Output, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,8" />
+        <TextBlock Text="출력 형식" />
+        <ComboBox ItemsSource="{Binding Formats}" SelectedItem="{Binding Format}" Margin="0,4,0,8" />
+        <TextBlock Text="SUPIR: 비상업적 이용 제한. 원본 동일성을 보증하지 않습니다." TextWrapping="Wrap" FontSize="11" />
+    </StackPanel>
+</UserControl>

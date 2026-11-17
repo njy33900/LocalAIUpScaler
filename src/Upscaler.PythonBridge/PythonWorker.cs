@@ -95,6 +95,7 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
+        start.Environment["PYTHONUTF8"] = "1";
         start.ArgumentList.Add("-u");
         start.ArgumentList.Add(options.WorkerPath ?? Path.Combine(Root, "python", "worker.py"));
         var current = new Session(Process.Start(start) ?? throw new IOException("Worker를 시작하지 못했습니다."));
@@ -182,20 +183,50 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
             current.JobId = id;
             current.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
             temporary = Path.Combine(Path.GetFullPath(settings.Output), $".upscaler-{id}.tmp");
-            await SendAsync(current, new
+            if (settings.Restoration is { } restore)
             {
-                protocol_version = 1,
-                type = "upscale",
-                job_id = id,
-                input = Path.GetFullPath(input),
-                output_dir = Path.GetFullPath(settings.Output),
-                device = settings.Device,
-                precision = settings.Precision,
-                format = settings.Format,
-                model = settings.Model,
-                denoise = settings.Denoise,
-                tile_size = settings.Tile
-            });
+                await SendAsync(current, new
+                {
+                    protocol_version = 1,
+                    type = "restore",
+                    job_id = id,
+                    input = Path.GetFullPath(input),
+                    output_dir = Path.GetFullPath(settings.Output),
+                    engine = restore.Engine,
+                    preset = restore.Preset,
+                    task = "restore",
+                    device = "cuda",
+                    scale = restore.Scale,
+                    format = settings.Format,
+                    options = new
+                    {
+                        steps = restore.Steps,
+                        cfg = restore.Cfg,
+                        strength = restore.Strength,
+                        seed = restore.Seed,
+                        noise_aug = restore.NoiseAug,
+                        positive = restore.Positive,
+                        negative = restore.Negative,
+                        color_fix = restore.ColorFix,
+                        tiled = restore.Tiled
+                    }
+                });
+            }
+            else
+                await SendAsync(current, new
+                {
+                    protocol_version = 1,
+                    type = "upscale",
+                    job_id = id,
+                    input = Path.GetFullPath(input),
+                    output_dir = Path.GetFullPath(settings.Output),
+                    device = settings.Device,
+                    precision = settings.Precision,
+                    format = settings.Format,
+                    model = settings.Model,
+                    denoise = settings.Denoise,
+                    tile_size = settings.Tile
+                });
             try
             {
                 return await current.Pending.Task.WaitAsync(options.JobTimeout, linked.Token);
@@ -232,6 +263,14 @@ public sealed class PythonWorker : IUpscaleEngine, IAsyncDisposable
                 try
                 {
                     File.Delete(temporary);
+                    if (settings.Restoration is not null)
+                    {
+                        // Only this session's UUID directory is removed, after its process tree exits.
+                        var id = Path.GetFileNameWithoutExtension(temporary)[".upscaler-".Length..];
+                        var staging = Path.Combine(Path.GetDirectoryName(temporary)!, ".restoration-" + id);
+                        if (Directory.Exists(staging))
+                            Directory.Delete(staging, recursive: true);
+                    }
                 }
                 catch (Exception error)
                 {

@@ -128,7 +128,9 @@ internal static class Program
         {
             try
             {
-                if (Environment.GetCommandLineArgs().Contains("--render-ui"))
+                if (Environment.GetCommandLineArgs().Contains("--advanced-smoke"))
+                    await AdvancedSmoke();
+                else if (Environment.GetCommandLineArgs().Contains("--render-ui"))
                     await RenderUi();
                 else if (Environment.GetCommandLineArgs().Contains("--ui-integration"))
                     await UiIntegration();
@@ -176,6 +178,17 @@ internal static class Program
         MakeImage(input);
         try
         {
+            await Test("Advanced tab preserves standard model and shows installation controls", async () =>
+            {
+                var tabs = (TabControl)window.FindName("ProcessingTabs");
+                Check(tabs.Items.Count == 2, "restoration tab missing");
+                var model = vm.Model;
+                tabs.SelectedIndex = 1;
+                await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                Check(vm.Advanced.IsActive && vm.Model == model, "tab mode changed standard model");
+                tabs.SelectedIndex = 0;
+                Check(!vm.Advanced.IsActive && vm.Model == model, "standard mode not restored");
+            });
             await Test("Denoise section follows lightweight model and preserves strength", async () =>
             {
                 var section = (FrameworkElement)window.FindName("DenoiseSection");
@@ -470,57 +483,153 @@ internal static class Program
         // Render the actual WPF visual at each pixel density without changing OS display settings.
         var output = Path.Combine(Root, "artifacts", "ui");
         Directory.CreateDirectory(output);
-        foreach (var size in new[]
+        var tabs = (TabControl)window.FindName("ProcessingTabs");
+        foreach (var advanced in new[] { false, true })
         {
+            tabs.SelectedIndex = advanced ? 1 : 0;
+            if (advanced)
+                await vm.Advanced.RefreshAsync();
+            await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            foreach (var size in new[]
+            {
             new Size(1100, 700),
             new Size(1440, 900)
         }
 
-        )
-        {
-            foreach (var scale in new[]
+            )
             {
+                foreach (var scale in new[]
+                {
                 1.0,
                 1.25,
                 1.5,
                 2.0
             }
 
-            )
-            {
-                content.Width = size.Width;
-                content.Height = size.Height;
-                content.Measure(new Size(content.Width, content.Height));
-                content.Arrange(new Rect(0, 0, content.Width, content.Height));
-                content.UpdateLayout();
-                await vm.LoadThumbnailAsync(vm.Files.First());
-                content.UpdateLayout();
-                var visual = new DrawingVisual();
-                using (var draw = visual.RenderOpen())
+                )
                 {
-                    draw.DrawRectangle((Brush)Application.Current.FindResource("BackgroundBrush"), null, new Rect(size));
-                    draw.DrawRectangle(new VisualBrush(content), null, new Rect(0, 0, content.Width, content.Height));
+                    content.Width = size.Width;
+                    content.Height = size.Height;
+                    content.Measure(new Size(content.Width, content.Height));
+                    content.Arrange(new Rect(0, 0, content.Width, content.Height));
+                    content.UpdateLayout();
+                    await vm.LoadThumbnailAsync(vm.Files.First());
+                    content.UpdateLayout();
+                    var visual = new DrawingVisual();
+                    using (var draw = visual.RenderOpen())
+                    {
+                        draw.DrawRectangle((Brush)Application.Current.FindResource("BackgroundBrush"), null, new Rect(size));
+                        draw.DrawRectangle(new VisualBrush(content), null, new Rect(0, 0, content.Width, content.Height));
+                    }
+
+                    var bitmap = new RenderTargetBitmap((int)(size.Width * scale), (int)(size.Height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+                    bitmap.Render(visual);
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                    var path = Path.Combine(output, $"{(advanced ? "advanced" : "layout")}-{size.Width}x{size.Height}-{scale * 100:F0}.png");
+                    using var file = File.Create(path);
+                    encoder.Save(file);
+                    Check(bitmap.PixelWidth == (int)(size.Width * scale), "DPI raster size");
+                    passed++;
+                    Console.WriteLine("PASS render " + Path.GetFileName(path));
                 }
-
-                var bitmap = new RenderTargetBitmap((int)(size.Width * scale), (int)(size.Height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
-                bitmap.Render(visual);
-                var encoder = new PngBitmapEncoder();
-                encoder.Frames.Add(BitmapFrame.Create(bitmap));
-                var path = Path.Combine(output, $"layout-{size.Width}x{size.Height}-{scale * 100:F0}.png");
-                using var file = File.Create(path);
-                encoder.Save(file);
-                Check(bitmap.PixelWidth == (int)(size.Width * scale), "DPI raster size");
-                passed++;
-                Console.WriteLine("PASS render " + Path.GetFileName(path));
             }
-        }
 
+        }
         vm.Stop();
         window.Close();
     }
 
+    static async Task AdvancedSmoke()
+    {
+        var engine = Environment.GetCommandLineArgs().Last();
+        if (engine == "--advanced-smoke")
+            engine = "diffbir_v21";
+        var status = await AdvancedRuntime.InspectAsync(Root, engine);
+        Check(status.Ready, "Advanced smoke requires verified real assets: " + status.Message);
+        var output = Temp();
+        var input = Path.Combine(output, "고급 sample.png");
+        MakeImage(input, 256, 256);
+        var original = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(input));
+        var options = new RestorationOptions { Engine = engine, Scale = 2, Steps = engine == "diffbir_v21" ? 10 : 50, Cfg = engine == "diffbir_v21" ? 6 : 4 };
+        var settings = new Settings { Output = output, Restoration = options };
+        await using var worker = new PythonWorker(Root, new WorkerOptions
+        {
+            PythonPath = AdvancedRuntime.PythonPath(Root, engine),
+            WorkerPath = Path.Combine(Root, "python", "advanced", "worker.py"),
+            JobTimeout = TimeSpan.FromMinutes(15)
+        });
+        await Test("Advanced bridge cancels and cleans a real inference process", async () =>
+        {
+            using var cancel = new CancellationTokenSource();
+            void CancelOnProgress(JsonElement value) => cancel.Cancel();
+            worker.Progress += CancelOnProgress;
+            try
+            {
+                var cancelled = false;
+                try
+                {
+                    await worker.UpscaleAsync(input, settings, cancel.Token);
+                }
+                catch (OperationCanceledException) { cancelled = true; }
+                Check(cancelled, "job did not cancel");
+                Check(!Directory.EnumerateFiles(output, ".upscaler-*").Any(), "cancel left temporary output");
+            }
+            finally { worker.Progress -= CancelOnProgress; }
+        });
+        await Test("Advanced bridge runs real sequential jobs after cancellation and preserves originals", async () =>
+        {
+            var stages = new HashSet<string>();
+            worker.Progress += value => stages.Add(value.GetProperty("stage").GetString()!);
+            var outputs = new HashSet<string>();
+            for (int i = 0; i < 2; i++)
+            {
+                var result = await worker.UpscaleAsync(input, settings, CancellationToken.None);
+                Check(result.GetProperty("type").GetString() == "completed", result.ToString());
+                var path = result.GetProperty("output").GetString()!;
+                Check(File.Exists(path) && outputs.Add(path), "output collision");
+                Check(result.GetProperty("output_width").GetInt32() == 512 && result.GetProperty("output_height").GetInt32() == 512, "advanced dimensions");
+            }
+            Check(stages.Contains("stage2") && (engine != "diffbir_v21" || stages.Contains("stage1")), "missing real stages");
+            Check(original.SequenceEqual(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(input))), "original changed");
+            Check(!Directory.EnumerateFiles(output, ".upscaler-*").Any(), "temporary output remains");
+        });
+    }
+
     static async Task Run()
     {
+        await Test("Advanced profiles persist independently and unverified engines are blocked", () =>
+        {
+            var settings = new Settings();
+            var vm = new MainViewModel(settings: settings);
+            try
+            {
+                vm.Advanced.Preset = "faithful";
+                Check(vm.Advanced.Steps == 20 && vm.Advanced.Cfg == 4, "DiffBIR faithful mapping");
+                vm.Advanced.Steps = 12;
+                Check(vm.Advanced.Preset == "custom", "custom options not marked");
+                settings.RestorationEngine = "supir_v0q";
+                vm.Advanced.Steps = 30;
+                settings.RestorationEngine = "diffbir_v21";
+                Check(vm.Advanced.Steps == 12, "profile cross-contamination");
+                vm.Advanced.IsActive = true;
+                bool blocked = false;
+                try
+                {
+                    vm.CaptureSettings();
+                }
+                catch (ArgumentException) { blocked = true; }
+                Check(blocked, "unverified engine not blocked");
+                vm.Advanced.IsActive = false;
+                Check(vm.CaptureSettings().Restoration is null, "advanced request leaked into standard mode");
+                var path = Path.Combine(Temp(), "settings.json");
+                settings.Save(path);
+                var restored = Settings.Load(path);
+                Check(restored.RestorationProfiles["supir_v0q"].Steps == 30 && restored.RestorationProfiles["diffbir_v21"].Steps == 12, "profile persistence");
+            }
+            finally { vm.Stop(); }
+            return Task.CompletedTask;
+        });
         await Test("Settings roundtrip and invalid fallback", () =>
         {
             var p = Path.Combine(Temp(), "settings.json");

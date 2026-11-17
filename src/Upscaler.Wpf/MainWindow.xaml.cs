@@ -12,7 +12,8 @@ namespace Upscaler.Wpf;
 public partial class MainWindow : ThemedWindow
 {
     private readonly MainViewModel vm = new();
-    private readonly PythonWorker worker;
+    private PythonWorker worker;
+    private string workerEngine = "";
     private readonly List<string> history = [];
     private int historyIndex = -1;
     private string? lastResult;
@@ -388,6 +389,16 @@ public partial class MainWindow : ThemedWindow
         }
     }
 
+    private async void ProcessingModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ProcessingTabs is null || !ReferenceEquals(e.Source, ProcessingTabs))
+            return;
+        vm.Advanced.IsActive = ProcessingTabs.SelectedIndex == 1;
+        ProcessingHeader.Visibility = vm.Advanced.IsActive ? Visibility.Collapsed : Visibility.Visible;
+        if (vm.Advanced.IsActive)
+            await vm.Advanced.RefreshAsync();
+    }
+
     private async void RunImage(object s, RoutedEventArgs e)
     {
         if (!preparing && vm.Selected is { } item)
@@ -415,10 +426,10 @@ public partial class MainWindow : ThemedWindow
         }
     }
 
-    private Task Run(string[] paths, string? sourceFolder = null)
+    private async Task Run(string[] paths, string? sourceFolder = null)
     {
         if (busy || paths.Length == 0)
-            return Task.CompletedTask;
+            return;
         Settings settings;
         try
         {
@@ -427,14 +438,30 @@ public partial class MainWindow : ThemedWindow
         catch (Exception error)
         {
             AppDialog.Inform(this, "설정 확인", error.Message);
-            return Task.CompletedTask;
+            return;
         }
 
-        if (!AppDialog.Confirm(this, "업스케일링 시작", $"대상: {paths.Length}개 이미지\n출력: {settings.Output}\n\n원본을 보존하고 4배 확대 결과를 저장합니다.", "시작"))
-            return Task.CompletedTask;
+        var description = settings.Restoration is { } restore
+            ? $"고급 복원 · {restore.Engine} · {restore.Scale}× · CUDA\n생성형 복원은 원본에 없던 세부 사항을 생성할 수 있습니다."
+            : "원본을 보존하고 4배 확대 결과를 저장합니다.";
+        if (!AppDialog.Confirm(this, "이미지 처리 시작", $"대상: {paths.Length}개 이미지\n출력: {settings.Output}\n\n{description}", "시작"))
+            return;
         busy = true;
         try
         {
+            var nextEngine = settings.Restoration?.Engine ?? "";
+            if (workerEngine != nextEngine)
+            {
+                // Dispose waits for the old process tree to exit before another engine can load.
+                await worker.DisposeAsync();
+                worker = new(vm.Root, nextEngine.Length == 0 ? null : new WorkerOptions
+                {
+                    PythonPath = AdvancedRuntime.PythonPath(vm.Root, nextEngine),
+                    WorkerPath = Path.Combine(vm.Root, "python", "advanced", "worker.py"),
+                    JobTimeout = TimeSpan.FromHours(1)
+                });
+                workerEngine = nextEngine;
+            }
             progress = new(worker, paths, settings)
             {
                 Owner = this
@@ -448,6 +475,11 @@ public partial class MainWindow : ThemedWindow
             else
                 vm.EngineStatus = "엔진 대기 · 다음 실행 시 준비";
         }
+        catch (Exception error)
+        {
+            AppDialog.Inform(this, "처리 오류", error.Message);
+            AppLog.Write(error.ToString());
+        }
         finally
         {
             progress = null;
@@ -459,7 +491,7 @@ public partial class MainWindow : ThemedWindow
             }
         }
 
-        return Task.CompletedTask;
+        return;
     }
 
     private async void ShowResult(object s, RoutedEventArgs e)

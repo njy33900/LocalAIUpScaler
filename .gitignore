@@ -60,3 +60,4 @@ Desktop.ini
 
 # Local recovery snapshots and personal settings
 /recovery/
+/.advanced/

@@ -62,11 +62,19 @@ public sealed class Settings
     public string Model { get; set; } = "RealESRGAN_x4plus";
     public double Denoise { get; set; } = 0.5;
 
+    public string RestorationEngine { get; set; } = "diffbir_v21";
+    public Dictionary<string, RestorationOptions> RestorationProfiles { get; set; } = [];
+    [System.Text.Json.Serialization.JsonIgnore]
+    public RestorationOptions? Restoration
+    {
+        get; set;
+    }
     public string Theme { get; set; } = "dark";
     public static string DirectoryPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAIUpscaler");
 
     public void Validate()
     {
+        Restoration?.Validate();
         if (Model is not ("RealESRGAN_x4plus" or "RealESRGAN_x4plus_anime_6B" or "realesr-general-x4v3"))
             throw new ArgumentException("지원하지 않는 모델입니다.");
         if (!double.IsFinite(Denoise) || Denoise < 0 || Denoise > 1)

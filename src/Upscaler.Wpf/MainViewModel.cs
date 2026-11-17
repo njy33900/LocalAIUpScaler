@@ -349,8 +349,14 @@ public sealed class MainViewModel : Observable
         }
     }
 
-    public bool HasSelection => Selected is not null;
-    public bool HasFiles => Files.Count > 0;
+    private RestorationViewModel? advanced;
+    public RestorationViewModel Advanced => advanced ??= new(Root, Settings, () =>
+    {
+        Changed(nameof(HasSelection));
+        Changed(nameof(HasFiles));
+    });
+    public bool HasSelection => Selected is not null && (!Advanced.IsActive || Advanced.IsReady);
+    public bool HasFiles => Files.Count > 0 && (!Advanced.IsActive || Advanced.IsReady);
     public int CachedThumbnailCount => cache.Count;
 
     public MainViewModel(Func<string, CancellationToken, Task<string[]>>? scanner = null, Settings? settings = null)
@@ -373,6 +379,12 @@ public sealed class MainViewModel : Observable
         copy.Tile = SelectedPreset.TileSize;
         copy.TilePreset = SelectedPreset.Key;
         copy.Precision = Precision;
+        if (Advanced.IsActive)
+        {
+            copy.Restoration = Advanced.Capture();
+            copy.Device = "cuda";
+            copy.Precision = "fp16";
+        }
         copy.Validate();
         if (sourceFolder is not null)
         {
