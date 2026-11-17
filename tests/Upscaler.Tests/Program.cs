@@ -176,6 +176,19 @@ internal static class Program
         MakeImage(input);
         try
         {
+            await Test("Denoise section follows lightweight model and preserves strength", async () =>
+            {
+                var section = (FrameworkElement)window.FindName("DenoiseSection");
+                vm.Denoise = 0.3;
+                foreach (var model in new[] { "RealESRGAN_x4plus", "realesr-general-x4v3", "RealESRGAN_x4plus_anime_6B", "realesr-general-x4v3" })
+                {
+                    vm.Model = model;
+                    await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                    Check(section.Visibility == (vm.DenoiseEnabled ? Visibility.Visible : Visibility.Collapsed), "denoise visibility");
+                    Check(vm.Denoise == 0.3, "denoise strength lost on model switch");
+                }
+                vm.Model = "RealESRGAN_x4plus";
+            });
             await Test("UI preview, zoom and fit", async () =>
             {
                 await vm.NavigateAsync(dest);
@@ -721,6 +734,29 @@ internal static class Program
             Check(TilePresets.Resolve(null, 0).Key == "128" && TilePresets.Resolve(null, 64).Key == "128" && TilePresets.Resolve("high-end", 256).Key == "256" && TilePresets.Resolve("mainstream", 128).Key == "128", "legacy settings");
             vm.Stop();
             restored.Stop();
+            return Task.CompletedTask;
+        });
+        await Test("Folder jobs use named output children without changing base settings", () =>
+        {
+            var output = Temp();
+            var vm = new MainViewModel(settings: new Settings { Output = output });
+            try
+            {
+                var source = Path.Combine(Path.GetTempPath(), "원본 폴더");
+                var expected = Path.Combine(output, "원본 폴더_UpScaled");
+                Check(vm.CaptureSettings(source).Output == expected, "folder output");
+                Check(vm.CaptureSettings(source + Path.DirectorySeparatorChar).Output == expected, "trailing separator");
+                Check(vm.CaptureSettings(source).Output == expected, "suffix accumulated");
+                Check(vm.Output == output && vm.CaptureSettings().Output == output, "base or single-image output changed");
+                var root = Path.GetPathRoot(output)!;
+                var rootOutput = vm.CaptureSettings(root).Output;
+                Check(Path.GetDirectoryName(rootOutput) == output && Path.GetFileName(rootOutput).EndsWith("_UpScaled"), "invalid root output");
+                Check(!Directory.Exists(expected), "settings capture created directory before confirmation");
+            }
+            finally
+            {
+                vm.Stop();
+            }
             return Task.CompletedTask;
         });
         await Test("CPU forces FP32 while preserving GPU precision preference", () =>

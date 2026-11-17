@@ -403,7 +403,7 @@ public partial class MainWindow : ThemedWindow
         {
             var folder = vm.Folder;
             var paths = await Task.Run(() => Images.Scan(folder));
-            await Run(paths);
+            await Run(paths, folder);
         }
         catch (Exception error)
         {
@@ -415,14 +415,14 @@ public partial class MainWindow : ThemedWindow
         }
     }
 
-    private Task Run(string[] paths)
+    private Task Run(string[] paths, string? sourceFolder = null)
     {
         if (busy || paths.Length == 0)
             return Task.CompletedTask;
         Settings settings;
         try
         {
-            settings = vm.CaptureSettings();
+            settings = vm.CaptureSettings(sourceFolder);
         }
         catch (Exception error)
         {

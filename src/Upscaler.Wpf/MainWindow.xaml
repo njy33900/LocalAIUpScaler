@@ -580,9 +580,21 @@
                             <TextBlock Text="모델" Style="{StaticResource FieldLabelStyle}" />
                             <ComboBox ItemsSource="{Binding Models}" DisplayMemberPath="Label" SelectedValuePath="Key" SelectedValue="{Binding Model}" Margin="0,0,0,10" AutomationProperties.Name="업스케일링 모델" />
                             <TextBlock Text="{Binding ModelStatus}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{StaticResource SecondaryBrush}" />
-                            <TextBlock Text="노이즈 제거 · 경량 모델 전용" FontSize="11" Foreground="{StaticResource SecondaryBrush}" />
-                            <Slider Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Value="{Binding Denoise}" IsEnabled="{Binding DenoiseEnabled}" Margin="0,6,0,4" />
-                            <TextBlock Text="{Binding Denoise, StringFormat=강도 {0:F1} (0 약함 / 1 강함)}" FontSize="11" Margin="0,0,0,12" Foreground="{StaticResource SecondaryBrush}" />
+                            <StackPanel x:Name="DenoiseSection">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DenoiseEnabled}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="노이즈 제거 · 경량 모델 전용" FontSize="11" Foreground="{StaticResource SecondaryBrush}" />
+                                <Slider Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Value="{Binding Denoise}" Margin="0,6,0,4" />
+                                <TextBlock Text="{Binding Denoise, StringFormat=강도 {0:F1} (0 약함 / 1 강함)}" FontSize="11" Margin="0,0,0,12" Foreground="{StaticResource SecondaryBrush}" />
+                            </StackPanel>
 
                             <TextBlock
                                 Text="실행 장치"

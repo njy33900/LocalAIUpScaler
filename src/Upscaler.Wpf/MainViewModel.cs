@@ -367,13 +367,26 @@ public sealed class MainViewModel : Observable
         thumbnailDecoder = new(Root);
     }
 
-    public Settings CaptureSettings()
+    public Settings CaptureSettings(string? sourceFolder = null)
     {
         var copy = Settings.Snapshot();
         copy.Tile = SelectedPreset.TileSize;
         copy.TilePreset = SelectedPreset.Key;
         copy.Precision = Precision;
         copy.Validate();
+        if (sourceFolder is not null)
+        {
+            var folder = new DirectoryInfo(System.IO.Path.GetFullPath(sourceFolder));
+            var name = folder.Name;
+            if (folder.Parent is null)
+            {
+                // Drive and share roots must still yield a valid child directory name.
+                name = string.Concat(name.Where(c => !System.IO.Path.GetInvalidFileNameChars().Contains(c)));
+            }
+            if (string.IsNullOrWhiteSpace(name))
+                name = "Root";
+            copy.Output = System.IO.Path.Combine(copy.Output, name + "_UpScaled");
+        }
         return copy;
     }
 
