@@ -20,9 +20,11 @@ d = ImageDraw.Draw(image)
 
 
 def line(points, fill, width):
+    """아이콘 좌표계에서 지정 선분과 두께를 그린다."""
     points = [(x * s, y * s) for x, y in points]
     d.line(points, fill=fill, width=round(width * s), joint="curve")
     r = width * s / 2
+
     for x, y in (points[0], points[-1]):
         d.ellipse((x - r, y - r, x + r, y + r), fill=fill)
 

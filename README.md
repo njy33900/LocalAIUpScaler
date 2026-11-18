@@ -13,7 +13,7 @@ Windows용 로컬 Real-ESRGAN x4 이미지 업스케일러입니다. WPF에서 �
 ./scripts/run.ps1
 ```
 
-앱을 닫은 상태에서 다시 빌드하세요. 실행 파일은 `src/Upscaler.Wpf/bin/Release/net10.0-windows/Upscaler.Wpf.exe`입니다. 현재 개발 버전은 소스 트리의 `python`, `models`, `.venv`를 사용합니다. Python을 포함한 설치 패키지는 후속 배포 단계입니다.
+앱을 닫은 상태에서 다시 빌드하세요. 실행 파일은 `out/Release/Upscaler.Wpf.exe`입니다. 현재 개발 버전은 소스 트리의 `python`, `models`, `.venv`를 사용합니다. Python을 포함한 설치 패키지는 후속 배포 단계입니다.
 
 ## 사용 방법
 
