@@ -9,34 +9,45 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 errors = []
+
 if sys.version_info[:2] != (3, 11):
     errors.append("Python 3.11 is required")
+
 for line in (ROOT / "python/requirements-lock.txt").read_text(encoding="utf-8-sig").splitlines():
     if not line.strip() or line.startswith("#"):
         continue
+
     name, version = line.split("==")
+
     try:
         actual = importlib.metadata.version(name)
+
         if actual != version:
             errors.append(f"{name}: expected {version}, found {actual}")
     except importlib.metadata.PackageNotFoundError:
         errors.append(f"{name}: missing")
+
 for line in (ROOT / "models/SHA256SUMS").read_text(encoding="utf-8-sig").splitlines():
     if not line.strip():
         continue
+
     expected, filename = line.split()
     model = ROOT / "models" / filename
+
     if not model.exists() or hashlib.sha256(model.read_bytes()).hexdigest() != expected:
         errors.append(f"Model missing or checksum mismatch: {filename}")
+
 if errors:
     print("\n".join(errors))
     sys.exit(1)
+
 import torch
 from PIL import features
 
 if not features.check("webp") or not features.check("libtiff"):
     print("WebP and TIFF codecs are required")
     sys.exit(1)
+
 print(
     json.dumps(
         dict(

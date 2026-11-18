@@ -9,6 +9,13 @@
 - Python은 Black 25.1.0, 줄 길이 100을 기준으로 합니다. 서식 도구는 앱 실행 의존성에 포함하지 않습니다.
 - 주석에는 취소 경계, 소유권, 동시성 제약과 설계 이유를 기록합니다. 코드가 이미 설명하는 단순 대입은 반복 설명하지 않습니다.
 
+## 문서 주석
+
+- C# 클래스·레코드·인터페이스·메서드는 XML 문서 주석으로 책임을 설명합니다. 요약은 `<summary>`에 쓰고, 호출 계약이 중요하면 `<param>`, `<returns>`, `<exception>`, `<remarks>`를 추가합니다.
+- Python은 docstring을 사용합니다. 인자·반환·예외 설명이 필요하면 Google 스타일의 `Args:`, `Returns:`, `Raises:`를 사용합니다. 외부에서 가져온 코드의 라이선스와 기존 설명은 보존합니다.
+- PowerShell 진입 스크립트에는 comment-based help의 `.SYNOPSIS`, `.DESCRIPTION`, 필요 시 `.PARAMETER`를 작성합니다.
+- 주석은 메서드의 역할과 제약을 설명하고, 구현을 바꿀 때 함께 갱신합니다. 처리·검증·반환 사이에는 논리적인 구분에 맞춰 빈 줄을 둡니다.
+
 ## 책임과 데이터 흐름
 
 | 위치 | 책임 |
@@ -35,3 +42,7 @@
 7. Python stdout은 통신 전용입니다. 로그나 디버그 출력으로 JSONL 또는 이미지 바이트 스트림을 오염시키지 않습니다.
 
 변경 후 `scripts/test.ps1 -RenderUI -UIIntegration`으로 실제 추론·취소·프로세스 복구·UI 모달과 렌더링을 확인합니다. 기능 변경이 없는 서식 정리도 Python/C# 구문 의미와 XAML 바인딩이 유지되는지 확인해야 합니다.
+
+## 빌드 출력
+
+공통 `Directory.Build.props`에서 빌드 출력을 루트의 `out/Debug` 또는 `out/Release`로 모읍니다. 실행 파일은 각 구성 폴더의 `Upscaler.Wpf.exe`입니다. 프로젝트별 중간 산출물은 기존 `obj`에 격리합니다.

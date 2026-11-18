@@ -1,4 +1,6 @@
 # Adapted from Real-ESRGAN (BSD-3-Clause); registry dependency removed.
+"""경량 Real-ESRGAN 모델의 SRVGG 추론 구조. 원본 라이선스 고지를 유지한다."""
+
 from torch import nn as nn
 from torch.nn import functional as F
 
@@ -21,6 +23,7 @@ class SRVGGNetCompact(nn.Module):
     def __init__(
         self, num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4, act_type="prelu"
     ):
+        """저해상도 공간의 합성곱 본체와 마지막 PixelShuffle 업샘플러를 구성한다."""
         super(SRVGGNetCompact, self).__init__()
         self.num_in_ch = num_in_ch
         self.num_out_ch = num_out_ch
@@ -32,6 +35,7 @@ class SRVGGNetCompact(nn.Module):
         self.body = nn.ModuleList()
         # the first conv
         self.body.append(nn.Conv2d(num_in_ch, num_feat, 3, 1, 1))
+
         # the first activation
         if act_type == "relu":
             activation = nn.ReLU(inplace=True)
@@ -39,11 +43,13 @@ class SRVGGNetCompact(nn.Module):
             activation = nn.PReLU(num_parameters=num_feat)
         elif act_type == "leakyrelu":
             activation = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+
         self.body.append(activation)
 
         # the body structure
         for _ in range(num_conv):
             self.body.append(nn.Conv2d(num_feat, num_feat, 3, 1, 1))
+
             # activation
             if act_type == "relu":
                 activation = nn.ReLU(inplace=True)
@@ -51,6 +57,7 @@ class SRVGGNetCompact(nn.Module):
                 activation = nn.PReLU(num_parameters=num_feat)
             elif act_type == "leakyrelu":
                 activation = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+
             self.body.append(activation)
 
         # the last conv
@@ -59,7 +66,9 @@ class SRVGGNetCompact(nn.Module):
         self.upsampler = nn.PixelShuffle(upscale)
 
     def forward(self, x):
+        """학습한 고주파 잔차와 최근접 확대 입력을 합쳐 복원 결과를 반환한다."""
         out = x
+
         for i in range(0, len(self.body)):
             out = self.body[i](out)
 
@@ -67,4 +76,5 @@ class SRVGGNetCompact(nn.Module):
         # add the nearest upsampled image, so that the network learns the residual
         base = F.interpolate(x, scale_factor=self.upscale, mode="nearest")
         out += base
+
         return out

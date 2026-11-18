@@ -50,8 +50,10 @@ class Client:
 
     def next(self):
         value = self.messages.get(timeout=90)
+
         if isinstance(value, Exception):
             raise value
+
         return value
 
     def send(self, **request):
@@ -61,6 +63,7 @@ class Client:
     def terminal(self):
         while True:
             value = self.next()
+
             if value["type"] in ("completed", "failed", "cancelled"):
                 return value
 
@@ -95,6 +98,7 @@ class WorkerTests(unittest.TestCase):
             before = hashlib.sha256(path.read_bytes()).hexdigest()
             outputs = []
             devices = ["cpu", "cuda"] if self.client.ready["cuda"] else ["cpu", "cpu"]
+
             for i, device in enumerate(devices):
                 self.client.send(
                     type="upscale",
@@ -109,10 +113,12 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual(response["type"], "completed", response)
                 self.assertEqual(response["precision"], "fp32" if device == "cpu" else "fp16")
                 outputs.append(response["output"])
+
                 with Image.open(response["output"]) as result:
                     self.assertEqual(result.size, (32, 24))
                     self.assertEqual(result.mode, "RGBA")
                     self.assertEqual(result.getchannel("A").getextrema(), (128, 128))
+
             self.assertNotEqual(outputs[0], outputs[1])
             self.assertEqual(before, hashlib.sha256(path.read_bytes()).hexdigest())
 
@@ -128,11 +134,15 @@ class WorkerTests(unittest.TestCase):
                 device="cpu",
                 tile_size=32,
             )
+
             while True:
                 event = self.client.next()
+
                 if event["type"] == "progress" and event["stage"] == "inference":
                     break
+
                 self.assertNotEqual(event["type"], "failed", event)
+
             self.client.send(type="cancel", job_id="cancel-test")
             self.assertEqual(self.client.terminal()["type"], "cancelled")
             self.assertEqual(list(Path(folder).glob(".upscaler-*")), [])
@@ -147,6 +157,7 @@ class WorkerTests(unittest.TestCase):
         self.client.process.stdin.write("not-json\n")
         self.client.process.stdin.flush()
         self.assertEqual(self.client.terminal()["type"], "failed")
+
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "bad.png"
             path.write_bytes(b"broken")
@@ -161,6 +172,7 @@ class WorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "models.png"
             Image.new("RGB", (12, 10), (120, 80, 30)).save(path)
+
             for model in (
                 "RealESRGAN_x4plus_anime_6B",
                 "realesr-general-x4v3",
@@ -182,6 +194,7 @@ class WorkerTests(unittest.TestCase):
                         self.assertEqual(
                             (result["output_width"], result["output_height"]), (48, 40)
                         )
+
             self.client.send(
                 type="upscale",
                 job_id="bad-model",
@@ -202,12 +215,14 @@ class WorkerTests(unittest.TestCase):
     def test_three_preset_tiles_with_full_size_cuda_tiles(self):
         if not self.client.ready["cuda"]:
             self.skipTest("CUDA unavailable")
+
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "preset.png"
             y, x = np.mgrid[:544, :576]
             Image.fromarray(
                 np.stack((x % 256, y % 256, (x + y) % 256), axis=-1).astype(np.uint8)
             ).save(path)
+
             for tile in (128, 256, 512):
                 self.client.send(
                     type="upscale",
@@ -223,12 +238,14 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual(
                     (response["output_width"], response["output_height"]), (2304, 2176)
                 )
+
                 with Image.open(response["output"]) as image:
                     self.assertEqual(image.size, (2304, 2176))
 
     def test_cuda_fp32_and_jpeg(self):
         if not self.client.ready["cuda"]:
             self.skipTest("CUDA unavailable")
+
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "transparent.png"
             Image.new("RGBA", (4, 3), (0, 0, 0, 0)).save(path)
@@ -244,6 +261,7 @@ class WorkerTests(unittest.TestCase):
             response = self.client.terminal()
             self.assertEqual(response["type"], "completed", response)
             self.assertEqual(response["precision"], "fp32")
+
             with Image.open(response["output"]) as image:
                 self.assertEqual(image.size, (16, 12))
                 self.assertEqual(image.getpixel((0, 0)), (255, 255, 255))
@@ -255,17 +273,21 @@ class PolicyTests(unittest.TestCase):
             root = Path(folder)
             (root / "models").mkdir()
             (root / "models/SHA256SUMS").write_text("0" * 64 + "  RealESRGAN_x4plus_anime_6B.pth\n")
+
             with patch("worker.ROOT", root), patch("worker.MODEL", None), patch(
                 "worker.MODEL_KEY", None
             ):
                 with self.assertRaisesRegex(RuntimeError, "설치되지"):
                     worker.load("cpu", "fp32", "RealESRGAN_x4plus_anime_6B")
+
                 (root / "models/RealESRGAN_x4plus_anime_6B.pth").write_bytes(b"invalid weights")
+
                 with self.assertRaisesRegex(RuntimeError, "체크섬"):
                     worker.load("cpu", "fp32", "RealESRGAN_x4plus_anime_6B")
 
     def test_disk_space_rejected(self):
         Usage = namedtuple("Usage", "total used free")
+
         with patch("worker.shutil.disk_usage", return_value=Usage(10, 10, 0)):
             with self.assertRaises(OSError):
                 worker.check_space(".", 10, 10)
@@ -276,6 +298,7 @@ class PolicyTests(unittest.TestCase):
                 path = Path(folder) / ("sample." + extension)
                 Image.new("RGB", (9, 5), "blue").save(path)
                 self.assertEqual(read_image(path).size, (9, 5))
+
             path = Path(folder) / "rotated.jpg"
             exif = Image.Exif()
             exif[274] = 6
@@ -286,8 +309,10 @@ class PolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "wrong.png"
             Image.new("RGB", (2, 2)).save(path, format="JPEG")
+
             with self.assertRaises(ValueError):
                 read_image(path)
+
             path = Path(folder) / "gray.tiff"
             Image.fromarray(np.array([[0, 32768, 65535]], dtype=np.uint16)).save(path)
             self.assertEqual(
@@ -308,6 +333,7 @@ class PolicyTests(unittest.TestCase):
             path = Path(folder) / "small.png"
             Image.new("RGB", (2, 2)).save(path)
             request = dict(job_id="oom", input=str(path), output_dir=folder)
+
             with patch("worker.load", return_value=(None, "cuda", True)), patch(
                 "worker.infer", side_effect=worker.torch.cuda.OutOfMemoryError()
             ), patch("worker.emit"), patch("worker.torch.cuda.empty_cache"), patch(
@@ -315,7 +341,9 @@ class PolicyTests(unittest.TestCase):
             ):
                 with self.assertRaises(RuntimeError):
                     worker.upscale(request, threading.Event())
+
                 self.assertEqual(worker.infer.call_count, 4)
+
             self.assertEqual(list(Path(folder).glob(".upscaler-*")), [])
 
     def test_cancel_before_commit_removes_temp(self):
@@ -335,6 +363,7 @@ class PolicyTests(unittest.TestCase):
                     worker.upscale(
                         dict(job_id="saving", input=str(path), output_dir=folder), cancel
                     )
+
             self.assertFalse((Path(folder) / "small_x4.png").exists())
             self.assertEqual(list(Path(folder).glob(".upscaler-*")), [])
 
@@ -344,10 +373,12 @@ class PolicyTests(unittest.TestCase):
             Image.new("RGB", (2, 2)).save(path)
             existing = Path(folder) / ".upscaler-existing.tmp"
             existing.write_bytes(b"keep")
+
             with self.assertRaises(FileExistsError):
                 worker.upscale(
                     dict(job_id="existing", input=str(path), output_dir=folder), threading.Event()
                 )
+
             self.assertEqual(existing.read_bytes(), b"keep")
 
 

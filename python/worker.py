@@ -30,6 +30,8 @@ MODEL_KEY = None
 
 
 def emit(kind, job="", **data):
+    """출력 락 안에서 JSONL 이벤트 한 줄을 보낸다. stdout에는 프로토콜 외 정보를 쓰지 않는다."""
+
     with WRITE_LOCK:
         print(
             json.dumps(dict(protocol_version=1, type=kind, job_id=job, **data), ensure_ascii=False),
@@ -38,6 +40,8 @@ def emit(kind, job="", **data):
 
 
 def device_info():
+    """현재 CUDA 장치와 이 Worker가 지원하는 모델·배율·옵션 스키마를 반환한다."""
+
     return dict(
         cuda=torch.cuda.is_available(),
         devices=[torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())],
@@ -55,25 +59,43 @@ def device_info():
 
 
 def load(device, precision, model_id="RealESRGAN_x4plus", denoise=0.5):
+    """검증한 로컬 가중치로 모델을 준비하고 같은 장치·정밀도·모델 설정은 재사용한다.
+
+    모델 변경 시 이전 참조와 CUDA 캐시를 해제한다. 경량 모델의 denoise 값은
+    캐시 키와 DNI 가중치 혼합에 포함된다.
+
+    Returns:
+        준비된 모델, 실제 장치 문자열, FP16 사용 여부의 튜플.
+    """
     global MODEL, MODEL_KEY
+
     if device not in ("auto", "cuda", "cpu") or precision not in ("auto", "fp16", "fp32"):
         raise ValueError("장치 또는 정밀도 설정이 올바르지 않습니다.")
+
     if device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA를 사용할 수 없습니다. CPU 모드를 선택하세요.")
+
     selected = ("cuda" if torch.cuda.is_available() else "cpu") if device == "auto" else device
     half = selected == "cuda" and precision != "fp32"
+
     if model_id not in ("RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B", "realesr-general-x4v3"):
         raise ValueError("지원하지 않는 모델입니다.")
+
     denoise = float(denoise)
+
     if not 0 <= denoise <= 1:
         raise ValueError("노이즈 강도는 0~1이어야 합니다.")
+
     key = (selected, half, model_id, denoise if model_id == "realesr-general-x4v3" else None)
+
     if MODEL_KEY != key or MODEL is None:
         MODEL = None
         MODEL_KEY = None
         gc.collect()
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
         checksums = dict(
             line.split()[::-1]
             for line in (ROOT / "models/SHA256SUMS").read_text(encoding="utf-8-sig").splitlines()
@@ -81,21 +103,28 @@ def load(device, precision, model_id="RealESRGAN_x4plus", denoise=0.5):
         )
 
         def weights(name):
+            """모델 manifest의 SHA256을 대조한 뒤 로컬 체크포인트의 상태 사전을 반환한다."""
             path = ROOT / "models" / (name + ".pth")
+
             if not path.is_file():
                 raise RuntimeError(
                     f"모델이 설치되지 않았습니다: {name}. scripts/install_models.ps1을 실행하세요."
                 )
+
             if hashlib.sha256(path.read_bytes()).hexdigest() != checksums.get(path.name):
                 raise RuntimeError(f"모델 체크섬이 일치하지 않습니다: {name}")
+
             state = torch.load(path, map_location="cpu", weights_only=True)
+
             return state.get("params_ema", state.get("params"))
 
         state = weights(model_id)
+
         if model_id == "realesr-general-x4v3":
             net = SRVGGNetCompact(
                 num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type="prelu"
             )
+
             # Official DNI: general * strength + weak-denoise * (1 - strength).
             if denoise != 1:
                 weak = weights("realesr-general-wdn-x4v3")
@@ -108,22 +137,30 @@ def load(device, precision, model_id="RealESRGAN_x4plus", denoise=0.5):
             net = RRDBNet(
                 num_in_ch=3, num_out_ch=3, num_feat=64, num_block=blocks, num_grow_ch=32, scale=4
             )
+
         net.load_state_dict(state, strict=True)
         net = net.eval().to(selected)
+
         if half:
             net = net.half()
+
         MODEL, MODEL_KEY = net, key
+
     return MODEL, selected, half
 
 
 def check_cancel(cancel):
+    """협조적 중단 지점에서 취소 상태를 검사하고 InterruptedError로 처리를 빠져나온다."""
+
     if cancel.is_set():
         raise InterruptedError("작업이 취소되었습니다.")
 
 
 def check_space(dest, width, height):
     # Conservative uncompressed RGBA bound plus container overhead, checked before inference.
+    """추정 출력 크기와 여유 공간을 비교해 저장 전 디스크 부족을 거절한다."""
     needed = width * height * 16 * 4 + 1024 * 1024
+
     if shutil.disk_usage(dest).free < needed:
         raise OSError("출력 드라이브의 여유 공간이 부족합니다.")
 
@@ -132,10 +169,12 @@ def check_space(dest, width, height):
 # GPU 연산 사이의 타일 경계에서 취소를 확인한다.
 @torch.inference_mode()
 def infer(rgb, model, device, half, tile, job, cancel):
+    """추론 모드에서 타일별 복원을 실행하며 경계에서 취소와 진행 이벤트를 처리한다."""
     h, w = rgb.shape[:2]
     result = np.empty((h * 4, w * 4, 3), dtype=np.uint8)
     total = ((h + tile - 1) // tile) * ((w + tile - 1) // tile)
     done = 0
+
     for y in range(0, h, tile):
         for x in range(0, w, tile):
             check_cancel(cancel)
@@ -152,17 +191,24 @@ def infer(rgb, model, device, half, tile, job, cancel):
             check_cancel(cancel)
             done += 1
             emit("progress", job, stage="inference", progress=done * 100 / total)
+
     return Image.fromarray(result)
 
 
 class RealEsrganEngine(BaseEngine):
+    """기존 Real-ESRGAN 로딩·타일 추론을 엔진 계약으로 연결하는 어댑터."""
+
     engine_id = "realesrgan_x4plus"
     scale = 4
 
     def load(self, device, precision):
+        """장치·정밀도에 맞춘 기존 모델 로더의 결과를 반환한다."""
+
         return load(device, precision)
 
     def infer(self, rgb, model, device, half, tile, job, cancel):
+        """기존 타일 추론으로 위임하며 작업 ID와 취소 이벤트를 그대로 전달한다."""
+
         return infer(rgb, model, device, half, tile, job, cancel)
 
 
@@ -170,30 +216,46 @@ ENGINE = RealEsrganEngine()
 
 
 def upscale(req, cancel):
+    """입력을 복원하고 임시 파일을 거쳐 덮어쓰기 없이 결과를 확정한다.
+
+    OOM 시 제한된 타일 축소를 수행한다. 알파 처리·디스크 검사·취소 경계를
+    거치며 실패한 작업의 임시 파일만 finally에서 제거한다.
+
+    Returns:
+        최종 이벤트 종류와 결과 경로·치수·실행 장치 정보.
+    """
     job = req["job_id"]
     temp = None
+
     try:
         check_cancel(cancel)
         tile = int(req.get("tile_size", 0)) or 256
+
         if tile < 32 or tile > 2048:
             raise ValueError("타일 크기는 0(자동) 또는 32~2048이어야 합니다.")
+
         fmt = req.get("format", "PNG").upper()
+
         if fmt not in ("PNG", "JPEG"):
             raise ValueError("출력 형식은 PNG 또는 JPEG이어야 합니다.")
+
         if (
             req.get("scale", 4) != 4
             or req.get("engine", "realesrgan_x4plus") != "realesrgan_x4plus"
         ):
             raise ValueError("Real-ESRGAN x4plus의 4배 확대만 지원합니다.")
+
         emit("progress", job, stage="decoding", progress=None)
         image = read_image(req["input"])
         dest = Path(req["output_dir"]).resolve()
         dest.mkdir(parents=True, exist_ok=True)
         check_space(dest, image.width, image.height)
         candidate = dest / (".upscaler-" + job + ".tmp")
+
         # Probe write permission without ever overwriting an existing file.
         with candidate.open("xb"):
             pass
+
         temp = candidate
         check_cancel(cancel)
         emit("progress", job, stage="loading", progress=None)
@@ -206,6 +268,7 @@ def upscale(req, cancel):
         check_cancel(cancel)
         alpha = image.getchannel("A") if image.mode == "RGBA" else None
         rgb = np.array(image.convert("RGB"))
+
         for attempt in range(4):
             try:
                 output = ENGINE.infer(rgb, model, device, half, tile, job, cancel)
@@ -215,38 +278,49 @@ def upscale(req, cancel):
                     raise RuntimeError(
                         "GPU 메모리가 부족합니다. 더 작은 이미지나 CPU 모드를 사용하세요."
                     ) from None
+
             # Release the exception traceback and tile tensors before clearing the allocator.
             gc.collect()
             torch.cuda.empty_cache()
             tile = max(32, tile // 2)
             emit("progress", job, stage="retry", progress=None, tile_size=tile)
+
         check_cancel(cancel)
+
         if alpha is not None:
             output.putalpha(alpha.resize(output.size, Image.Resampling.BILINEAR))
+
         if fmt == "JPEG" and output.mode == "RGBA":
             bg = Image.new("RGB", output.size, "white")
             bg.paste(output, mask=output.getchannel("A"))
             output = bg
+
         check_space(dest, image.width, image.height)
         emit("progress", job, stage="saving", progress=None)
+
         with temp.open("wb") as stream:
             output.save(stream, format=fmt, quality=95)
             stream.flush()
             os.fsync(stream.fileno())
+
         check_cancel(cancel)
         stem = Path(req["input"]).stem[:120] + "_x4"
         suffix = ".jpg" if fmt == "JPEG" else ".png"
         n = 0
+
         while True:
             check_cancel(cancel)
             target = dest / (stem + ("" if n == 0 else f"_{n:03d}") + suffix)
+
             try:
                 # Windows same-volume rename refuses existing destinations, including symlinks.
                 os.rename(temp, target)
                 break
             except FileExistsError:
                 n += 1
+
         temp = None
+
         return "completed", dict(
             output=str(target),
             output_width=output.width,
@@ -260,12 +334,17 @@ def upscale(req, cancel):
 
 
 def work():
+    """큐의 작업을 한 번에 하나씩 실행하고 자원 정리 후 최종 이벤트를 발행한다."""
     global ACTIVE
+
     while True:
         task = QUEUE.get()
+
         if task is None:
             return
+
         req, cancel = task
+
         try:
             if req["type"] == "load_model":
                 check_cancel(cancel)
@@ -284,6 +363,7 @@ def work():
         except Exception as error:
             traceback.print_exc(file=sys.stderr)
             kind, data = "failed", dict(message=str(error), code=type(error).__name__)
+
         # All cleanup has finished before the terminal event is published.
         with STATE_LOCK:
             ACTIVE = None
@@ -291,20 +371,25 @@ def work():
 
 
 def main():
+    """JSONL 명령을 검증하고 단일 작업 큐·취소·종료의 수명 주기를 관리한다."""
     global ACTIVE
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     thread = threading.Thread(target=work, daemon=True)
     thread.start()
     emit("ready", **device_info())
+
     for line in sys.stdin:
         job = ""
+
         try:
             req = json.loads(line)
             job = req.get("job_id", "")
             kind = req.get("type")
+
             if req.get("protocol_version") != 1:
                 raise ValueError("지원하지 않는 프로토콜 버전")
+
             if kind in ("hello", "get_devices"):
                 emit("device_info", job, **device_info())
             elif kind == "cancel":
@@ -316,20 +401,25 @@ def main():
             elif kind in ("upscale", "load_model"):
                 if not isinstance(job, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job):
                     raise ValueError("job_id가 올바르지 않습니다.")
+
                 with STATE_LOCK:
                     if ACTIVE is not None:
                         raise ValueError("Worker가 이미 작업 중입니다.")
+
                     ACTIVE = (req, threading.Event())
                     QUEUE.put_nowait(ACTIVE)
             else:
                 raise ValueError("알 수 없는 명령")
         except Exception as error:
             emit("failed", job, message=str(error), code=type(error).__name__)
+
     with STATE_LOCK:
         if ACTIVE:
             ACTIVE[1].set()
+
     QUEUE.put(None)
     thread.join(timeout=15)
+
     if thread.is_alive():
         os._exit(1)
 
